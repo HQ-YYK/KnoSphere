@@ -1,0 +1,18 @@
+// 根目录 turbo.json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env":
+    },
+    "lint": {
+      "outputs":
+    }
+  }
+}

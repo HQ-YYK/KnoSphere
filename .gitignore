@@ -1,0 +1,131 @@
+# 依赖目录
+node_modules/
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.so
+.Python
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+.next/
+out/
+.next
+.nuxt
+.gatsby
+.cache
+.vuepress/dist
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.yarn/cache
+
+# 环境变量文件
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 日志文件
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+*.tmproj
+*.sublime-*
+
+# 编辑器文件
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/*
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+
+# 测试覆盖率
+coverage/
+.nyc_output
+
+# 临时文件
+*.tmp
+*.temp
+tmp/
+temp/
+
+# 系统文件
+*.pid
+*.seed
+*.pid.lock
+
+# 包管理器锁定文件
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 项目特定忽略
+.uv/
+.pnpm-store/
+*.db
+*.sqlite3
+
+# Milvus 数据文件
+milvus_data/
+
+# PostgreSQL 数据（如使用本地开发数据库）
+postgres_data/
+
+# Docker 相关
+docker-compose.override.yml
+!docker-compose.yml
+
+# 证书文件
+*.pem
+*.crt
+*.key
+
+# 大文件/上传文件
+uploads/
+media/
+staticfiles/
+
+# 性能分析文件
+*.prof
+*.profraw
+
+# 机器学习模型文件
+*.pth
+*.h5
+*.joblib
+*.model
+*.pkl
