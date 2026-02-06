@@ -14,14 +14,24 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
     print("🚀 启动 KnoSphere API...")
+
+    # 显示当前Embedding配置
+    provider = os.getenv("EMBEDDING_PROVIDER", "openai")
+    model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    dim = os.getenv("VECTOR_DIM", "1536")
+    print(f"🤖 当前Embedding配置: {provider} / {model} / {dim}维")
+    
     with engine.connect() as conn:
-        # 激活向量扩展，这是 2026 年 RAG 系统的核心
+        # 激活向量扩展
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         conn.commit()
+    
     init_db()  # 这会创建所有表，包括 User 和 Document
     print("✅ 数据库初始化完成")
+    
     yield
-    # 关闭时执行（如果需要清理资源）
+    
+    # 关闭时执行
     print("👋 关闭 KnoSphere API...")
 
 app = FastAPI(
@@ -37,7 +47,13 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "KnoSphere API"}
+    return {
+        "status": "healthy", 
+        "service": "KnoSphere API",
+        "embedding_provider": os.getenv("EMBEDDING_PROVIDER", "openai"),
+        "embedding_model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        "vector_dimension": os.getenv("VECTOR_DIM", "1536")
+    }
 
 @app.get("/documents")
 async def list_documents(
