@@ -1,0 +1,14 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17 # 使用内置向量支持的 PostgreSQL 17 镜像
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: knosphere_password
+      POSTGRES_DB: knosphere
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
