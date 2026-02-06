@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.128.2",
     "langchain-openai>=1.1.7",
     "langgraph>=1.0.7",
+    "pgvector>=0.4.2",
     "psycopg2-binary>=2.9.11",
     "redis>=7.1.0",
     "sqlmodel>=0.0.32",
