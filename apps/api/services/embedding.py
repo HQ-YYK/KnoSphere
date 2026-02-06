@@ -1,5 +1,8 @@
 from langchain_openai import OpenAIEmbeddings
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 初始化 Embedding 客户端
 # 2026 年的 LangChain 已原生适配 Python 3.14 的并发特性
