@@ -2,9 +2,9 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware  # 新增导入
 from contextlib import asynccontextmanager
 from sqlmodel import Session, text
-from typing import List
 import os
 import io
+from services.search import hybrid_search
 
 # 数据库和模型导入
 from database import init_db, engine, get_session
@@ -182,8 +182,125 @@ async def upload_document(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"数据库存储失败: {str(e)}")
 
-# 添加缺失的导入
-import io
+
+@app.get("/query")
+async def query_knowledge_base(
+    q: str,
+    top_k: int= 15,
+    final_k: int = 3,
+    db: Session = Depends(get_session)
+):
+    """
+    智能查询知识库
+    
+    参数：
+    - q: 查询问题
+    - top_k: 粗排阶段返回的文档数量（默认15）
+    - final_k: 精排后最终返回的文档数量（默认3）
+    """
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="请输入问题")
+    
+    if len(q.strip()) > 1000:
+        raise HTTPException(status_code=400, detail="问题过长，请精简到1000字符以内")
+    
+    try:
+        print(f"🔍 开始搜索: {q}")
+        results = await hybrid_search(q, db, top_k=top_k, final_k=final_k)
+        
+        # 格式化返回结果
+        formatted_results = []
+        for i, doc in enumerate(results):
+            formatted_results.append({
+                "rank": i + 1,
+                "id": doc.get("id"),
+                "title": doc.get("title", "无标题"),
+                "score": round(doc.get("score", 0) * 100, 2),  # 转换为百分比
+                "content_preview": doc.get("content", "")[:200] + "..." if len(doc.get("content", "")) > 200 else doc.get("content", ""),
+                "created_at": doc.get("created_at")
+            })
+        
+        return {
+            "query": q,
+            "total_results": len(results),
+            "results": formatted_results
+        }
+        
+    except Exception as e:
+        print(f"❌ 搜索失败: {e}")
+        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+
+@app.get("/documents/{document_id}")
+async def get_document(
+    document_id: int,
+    db: Session = Depends(get_session)
+):
+    """获取特定文档的详细信息"""
+    document = db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    
+    return {
+        "id": document.id,
+        "title": document.title,
+        "content": document.content,
+        "created_at": document.created_at,
+        "vector_dimensions": len(document.embedding) if document.embedding else 0
+    }
+
+@app.get("/search-test")
+async def search_test(
+    q: str = "什么是人工智能",
+    db: Session = Depends(get_session)
+):
+    """搜索测试端点（用于快速测试）"""
+    try:
+        results = await hybrid_search(q, db, top_k=5, final_k=3)
+        
+        # 如果数据库中没有文档，创建一些测试数据
+        if not results:
+            from services.embedding import generate_vector
+            import datetime
+            
+            # 创建测试文档
+            test_docs = [
+                {
+                    "title": "人工智能简介",
+                    "content": "人工智能（AI）是计算机科学的一个分支，旨在创造能够执行通常需要人类智能的任务的机器。"
+                },
+                {
+                    "title": "机器学习基础",
+                    "content": "机器学习是人工智能的一个子领域，使计算机能够在没有明确编程的情况下学习和改进。"
+                },
+                {
+                    "title": "深度学习",
+                    "content": "深度学习是机器学习的一个分支，使用多层神经网络来模拟人脑的工作方式。"
+                }
+            ]
+            
+            for doc_data in test_docs:
+                vector = await generate_vector(doc_data["content"])
+                new_doc = Document(
+                    title=doc_data["title"],
+                    content=doc_data["content"],
+                    embedding=vector,
+                    created_at=datetime.datetime.utcnow()
+                )
+                db.add(new_doc)
+            
+            db.commit()
+            
+            # 重新搜索
+            results = await hybrid_search(q, db, top_k=5, final_k=3)
+        
+        return {
+            "query": q,
+            "results": results,
+            "message": "测试成功" if results else "数据库为空，已创建测试数据"
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 # 如果需要添加更多文件格式处理，可以取消下面的注释并安装相应依赖
 # @app.on_event("startup")
