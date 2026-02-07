@@ -11,6 +11,11 @@ from database import init_db, engine, get_session
 from models import User, Document
 from services.embedding import generate_vector
 
+from fastapi.responses import StreamingResponse
+from services.llm import get_llm_service
+from services.search import hybrid_search
+import json
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -297,6 +302,132 @@ async def search_test(
             "query": q,
             "results": results,
             "message": "测试成功" if results else "数据库为空，已创建测试数据"
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/chat")
+async def chat(
+    request: dict,
+    db: Session = Depends(get_session)
+):
+    """
+    聊天接口 - 流式响应
+    
+    请求体：
+    {
+        "query": "用户的问题",
+        "top_k": 10,  # 可选，检索文档数量
+        "final_k": 3   # 可选，最终使用文档数量
+    }
+    """
+    query = request.get("query", "").strip()
+    top_k = request.get("top_k", 10)
+    final_k = request.get("final_k", 3)
+    
+    if not query:
+        return StreamingResponse(
+            iter(["❌ 请输入问题"]),
+            media_type="text/plain"
+        )
+    
+    # 1. 检索最相关的知识
+    try:
+        docs = await hybrid_search(query, db, top_k=top_k, final_k=final_k)
+        
+        if not docs:
+            return StreamingResponse(
+                iter(["🔍 知识库中没有找到相关文档。请先上传一些文档，或者换个问题试试。"]),
+                media_type="text/plain"
+            )
+        
+        # 2. 拼接上下文
+        context_parts = []
+        for i, doc in enumerate(docs[:final_k]):  # 使用 final_k 限制
+            context_parts.append(f"【文档{i+1}】{doc.get('title', '无标题')}")
+            content_preview = doc.get('content', '')[:500] + "..." if len(doc.get('content', '')) > 500 else doc.get('content', '')
+            context_parts.append(f"内容：{content_preview}")
+            context_parts.append(f"相关度：{doc.get('score', 0):.2%}")
+            context_parts.append("---")
+        
+        context_text = "\n".join(context_parts)
+        
+        # 3. 获取 LLM 服务
+        llm_service = get_llm_service()
+        
+        # 4. 返回流式响应
+        async def generate():
+            # 先返回检索结果摘要
+            yield f"🔍 已为您检索到 {len(docs)} 篇相关文档，使用前 {min(final_k, len(docs))} 篇生成回答：\n\n"
+            await asyncio.sleep(0.1)
+            
+            # 然后流式返回 AI 回答
+            async for chunk in llm_service.stream_response(query, context_text):
+                yield chunk
+        
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # 禁用 Nginx 缓冲
+            }
+        )
+        
+    except Exception as e:
+        print(f"❌ 聊天处理失败: {e}")
+        return StreamingResponse(
+            iter([f"❌ 处理请求时出错：{str(e)}"]),
+            media_type="text/plain"
+        )
+
+@app.get("/chat-test")
+async def chat_test(
+    query: str = "什么是人工智能？",
+    db: Session = Depends(get_session)
+):
+    """聊天测试端点（非流式，用于快速测试）"""
+    if not query:
+        return {"error": "请输入问题"}
+    
+    try:
+        # 检索文档
+        docs = await hybrid_search(query, db, top_k=5, final_k=2)
+        
+        if not docs:
+            return {"answer": "知识库中没有找到相关文档。", "documents": []}
+        
+        # 构建上下文
+        context_parts = []
+        for i, doc in enumerate(docs):
+            context_parts.append(f"【文档{i+1}】{doc.get('title', '无标题')}")
+            context_parts.append(f"内容：{doc.get('content', '')[:300]}...")
+            context_parts.append("---")
+        
+        context_text = "\n".join(context_parts)
+        
+        # 获取 LLM 服务
+        llm_service = get_llm_service()
+        
+        # 收集流式响应
+        full_response = ""
+        async for chunk in llm_service.stream_response(query, context_text):
+            full_response += chunk
+        
+        return {
+            "query": query,
+            "answer": full_response,
+            "documents_used": [
+                {
+                    "title": doc.get("title"),
+                    "score": f"{doc.get('score', 0):.2%}",
+                    "content_preview": doc.get("content", "")[:100] + "..."
+                }
+                for doc in docs[:2]
+            ]
         }
         
     except Exception as e:
