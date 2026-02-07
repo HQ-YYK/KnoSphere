@@ -1,8 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # 新增导入
 from contextlib import asynccontextmanager
 from sqlmodel import Session, text
 from typing import List
 import os
+import io
 
 # 数据库和模型导入
 from database import init_db, engine, get_session
@@ -40,6 +42,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# 添加 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 开发环境允许所有源
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有方法
+    allow_headers=["*"],  # 允许所有头部
+)
+
 
 @app.get("/")
 async def root():
