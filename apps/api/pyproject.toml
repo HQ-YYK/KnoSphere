@@ -11,6 +11,7 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langchain-openai>=1.1.7",
     "langgraph>=1.0.7",
+    "loguru>=0.7.3",
     "pgvector>=0.4.2",
     "psycopg2-binary>=2.9.11",
     "python-dotenv>=1.2.1",
