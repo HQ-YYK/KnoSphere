@@ -10,16 +10,23 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from core.auth import (
+    get_auth_service, Token, UserCreate, PasswordChange,
+    get_current_user, get_current_active_user, require_permission
+)
+from core.database_middleware import get_secure_db
+import secrets
+
 # 导入 Celery 任务
 from tasks.document_tasks import process_large_document, batch_process_documents
 from tasks.celery_app import celery_app
 
-# 导入其他模块
+
 from core.logger import logger, WorkflowLogger, log_api_request, log_api_response
 from services.agent_graph import get_agent_workflow
 from services.llm import get_llm_service
 from database import init_db, engine, get_session
-from models import Document
+from models import Document, User
 from services.embedding import generate_vector
 
 from services.agentic_chat import get_agentic_chat_service
@@ -61,6 +68,112 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ==================== 认证路由 ====================
+@app.post("/auth/register", response_model=UserCreate)
+async def register(
+    user_data: UserCreate,
+    db: Session = Depends(get_session)
+):
+    """用户注册"""
+    auth_service = get_auth_service()
+    
+    try:
+        user = await auth_service.create_user(user_data, db)
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "message": "注册成功"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+@app.post("/auth/login", response_model=Token)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_session)
+):
+    """用户登录"""
+    auth_service = get_auth_service()
+    
+    user = await auth_service.authenticate_user(
+        form_data.username, form_data.password, db
+    )
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = auth_service.create_access_token(
+        data={"sub": str(user.id), "username": user.username}
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "user_id": user.id,
+        "username": user.username,
+        "permissions": user.permissions or {}
+    }
+
+@app.post("/auth/refresh", response_model=Token)
+async def refresh_token(
+    current_user: User = Depends(get_current_user)
+):
+    """刷新令牌"""
+    auth_service = get_auth_service()
+    
+    access_token = auth_service.create_access_token(
+        data={"sub": str(current_user.id), "username": current_user.username}
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "permissions": current_user.permissions or {}
+    }
+
+@app.get("/auth/me", response_model=dict)
+async def get_me(
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取当前用户信息"""
+    return current_user.to_dict()
+
+@app.post("/auth/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session)
+):
+    """修改密码"""
+    auth_service = get_auth_service()
+    return await auth_service.change_password(password_data, current_user, db)
+
+@app.get("/auth/users", dependencies=[Depends(require_permission("admin"))])
+async def list_users(
+    db: Session = Depends(get_session),
+    skip: int = 0,
+    limit: int = 100
+):
+    """列出所有用户（仅管理员）"""
+    statement = select(User).offset(skip).limit(limit)
+    users = db.exec(statement).all()
+    
+    return [user.to_dict() for user in users]
+
 
 # ==================== 异步上传接口 ====================
 
@@ -370,7 +483,7 @@ async def get_recent_documents(
     }
 
 
-# ==================== 文档管理接口 ====================
+# ==================== 流式聊天接口 ====================
 
 @app.post("/chat/stream")
 async def chat_stream(
@@ -473,6 +586,48 @@ async def get_chat_debug_info(workflow_id: str):
             ]
         }
     }
+
+# 更新需要安全的 API 使用安全数据库会话
+@app.post("/chat/secure")
+async def secure_chat(
+    request: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_secure_db)
+):
+    """安全聊天接口 - 使用 RLS 保护的数据库会话"""
+    query = request.get("query", "").strip()
+    
+    if not query:
+        raise HTTPException(status_code=400, detail="请输入问题")
+    
+    try:
+        # 设置用户上下文（已在中间件中设置）
+        # 直接使用安全搜索
+        from services.search import secure_hybrid_search
+        
+        results = await secure_hybrid_search(
+            query=query,
+            db=db,
+            user_id=current_user.id,
+            top_k=10,
+            final_k=3
+        )
+        
+        return {
+            "query": query,
+            "results": results,
+            "user_id": current_user.id,
+            "documents_found": len(results)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+
+# 添加中间件到应用
+from core.database_middleware import DatabaseSessionMiddleware
+
+# 在 app 定义后添加中间件
+app.add_middleware(DatabaseSessionMiddleware)
 
 
 # ==================== 保留原有接口 ====================
