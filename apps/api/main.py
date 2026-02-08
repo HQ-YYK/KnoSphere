@@ -22,6 +22,8 @@ from database import init_db, engine, get_session
 from models import Document
 from services.embedding import generate_vector
 
+from services.agentic_chat import get_agentic_chat_service
+
 # 创建上传目录
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -366,6 +368,112 @@ async def get_recent_documents(
         ],
         "total": len(documents)
     }
+
+
+# ==================== 文档管理接口 ====================
+
+@app.post("/chat/stream")
+async def chat_stream(
+    request: dict,
+    db: Session = Depends(get_session)
+):
+    """
+    流式聊天接口 - 支持思考过程可视化
+    
+    请求体:
+    {
+        "query": "用户的问题",
+        "mode": "full"  # 或 "simple"，full显示详细思考过程
+    }
+    """
+    start_time = time.time()
+    query = request.get("query", "").strip()
+    mode = request.get("mode", "full")  # full: 完整思考过程，simple: 简化版
+    top_k = request.get("top_k", 10)
+    final_k = request.get("final_k", 3)
+    
+    if not query:
+        return StreamingResponse(
+            iter([AgentMessage.error("请输入问题")]),
+            media_type="text/plain"
+        )
+    
+    workflow_id = f"chat_stream_{datetime.now().timestamp()}"
+    
+    try:
+        # 获取聊天服务
+        chat_service = get_agentic_chat_service()
+        
+        if mode == "full":
+            # 完整思考过程模式
+            async def generate_full():
+                async for message in chat_service.stream_chat_with_thinking(
+                    query=query,
+                    db=db,
+                    top_k=top_k,
+                    final_k=final_k,
+                    workflow_id=workflow_id
+                ):
+                    yield message
+            
+            return StreamingResponse(
+                generate_full(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Stream-Mode": "full",
+                    "X-Workflow-ID": workflow_id
+                }
+            )
+        else:
+            # 简化模式
+            async def generate_simple():
+                async for message in chat_service.stream_simple_chat(
+                    query=query,
+                    db=db,
+                    workflow_id=workflow_id
+                ):
+                    yield message
+            
+            return StreamingResponse(
+                generate_simple(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Stream-Mode": "simple",
+                    "X-Workflow-ID": workflow_id
+                }
+            )
+        
+    except Exception as e:
+        logger.error(f"流式聊天失败: {e}", exc_info=True)
+        return StreamingResponse(
+            iter([AgentMessage.error(f"聊天失败: {str(e)}")]),
+            media_type="text/plain"
+        )
+
+@app.get("/chat/debug/{workflow_id}")
+async def get_chat_debug_info(workflow_id: str):
+    """获取聊天调试信息"""
+    # 这里可以连接数据库或Redis获取实际的工作流状态
+    # 暂时返回模拟数据
+    return {
+        "workflow_id": workflow_id,
+        "status": "completed",
+        "timestamp": datetime.now().isoformat(),
+        "debug_info": {
+            "mode": "full",
+            "thinking_steps": [
+                {"stage": "thinking_start", "time": "2026-01-01T10:00:00"},
+                {"stage": "retrieval", "time": "2026-01-01T10:00:01"},
+                {"stage": "generation", "time": "2026-01-01T10:00:03"},
+                {"stage": "complete", "time": "2026-01-01T10:00:05"}
+            ]
+        }
+    }
+
 
 # ==================== 保留原有接口 ====================
 

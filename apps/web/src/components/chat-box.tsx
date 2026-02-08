@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent } from "@/components/ui/card"
-import { Bot, User, Send, Loader2, BookOpen } from "lucide-react"
+import { CheckCircle2, BrainCircuit, Bot, User, Send, Loader2, BookOpen } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 interface Message {
@@ -33,6 +33,7 @@ export function ChatBox() {
   const [isLoading, setIsLoading] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+  const [currentStatuses, setCurrentStatuses] = useState<string[]>([]) // 存储当前消息的思考步骤
 
   // 自动滚动到底部
   useEffect(() => {
@@ -98,6 +99,8 @@ export function ChatBox() {
       }
       
       let aiResponse = ""
+      let aiContent = ""
+      let statuses: string[] = []
       
       while (true) {
         const { done, value } = await reader.read()
@@ -105,14 +108,25 @@ export function ChatBox() {
         
         const chunk = decoder.decode(value, { stream: true })
         aiResponse += chunk
-        
-        // 更新 AI 消息内容
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMsgId 
-            ? { ...msg, content: aiResponse }
-            : msg
-        ))
+
+        // 解析状态包
+        if (chunk.startsWith("[STATUS]")) {
+          const statusMsg = chunk.replace("[STATUS] ", "")
+          statuses = [...statuses, statusMsg]
+          setCurrentStatuses(statuses) // 更新当前思考状态
+        } else {
+          // 收到正式回复，清空当前思考状态（或标记为完成）
+          aiContent += chunk
+          // 更新 AI 消息内容
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMsgId 
+              ? { ...msg, content: aiResponse }
+              : msg
+          ))
+        }   
       }
+
+      setCurrentStatuses([]) // 结束对话后隐藏
       
     } catch (error: any) {
       console.error("聊天请求失败:", error)
