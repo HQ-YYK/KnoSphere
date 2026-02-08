@@ -1,4 +1,7 @@
+version: '3.8'
+
 services:
+  # 1. PostgreSQL 17 数据库（原有）
   db:
     image: pgvector/pgvector:pg17 # 使用内置向量支持的 PostgreSQL 17 镜像
     ports:
@@ -9,6 +12,92 @@ services:
       POSTGRES_DB: knosphere
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis：作为任务队列的中转站
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. API 服务器（原有，但增加 Redis 连接）
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://admin:knosphere_password@db:5432/knosphere
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+      - uploads_data:/app/uploads
+    command: >
+      sh -c "
+        python scripts/create_index.py &&
+        uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # 4. Celery Worker：专门执行耗时任务的后台进程
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+    environment:
+      - DATABASE_URL=postgresql://admin:knosphere_password@db:5432/knosphere
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+      - uploads_data:/app/uploads
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4
+
+  # 5. Celery Beat：定时任务调度器（可选）
+  beat:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+    environment:
+      - DATABASE_URL=postgresql://admin:knosphere_password@db:5439/knosphere
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app
+    command: celery -A tasks.celery_app beat --loglevel=info
 
 volumes:
   postgres_data:
+  redis_data:
+  uploads_data:
