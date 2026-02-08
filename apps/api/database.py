@@ -10,7 +10,7 @@ sqlite_url = os.getenv("DATABASE_URL")
 # 创建带连接的引擎，使用StaticPool避免并发问题
 engine = create_engine(
     sqlite_url,
-    connect_args={"check_same_thread": False} if "sqlite" in sqlite_url else {},
+    connect_args = {"check_same_thread": False} if sqlite_url and "sqlite" in sqlite_url else {},
     poolclass=StaticPool  # 使用静态连接池
 )
 
