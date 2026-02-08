@@ -1,9 +1,12 @@
-import json
 import os
 from pgvector.sqlalchemy import Vector
 from sqlmodel import Field, SQLModel, Relationship, Column
-from typing import Any, Dict, List, Optional, Text
+from typing import List, Optional, Dict, Any
 from datetime import datetime
+import json
+from sqlalchemy import Text as SQLText
+from sqlalchemy.dialects.postgresql import JSONB as SQLJSONB
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,7 +32,7 @@ class User(SQLModel, table=True):
     # 权限配置 (JSONB 格式)
     permissions: Optional[Dict[str, Any]] = Field(
         default={"documents": ["read", "write"]},
-        sa_column=Column(Text, default='{"documents": ["read", "write"]}')
+        sa_column=Column(SQLJSONB, default=lambda: {"documents": ["read", "write"]})
     )
     
     # 建立与文档的关联
@@ -78,13 +81,13 @@ class Document(SQLModel, table=True):
     is_public: bool = Field(default=False)
     tags: Optional[List[str]] = Field(
         default=[],
-        sa_column=Column(Text, default='[]')
+        sa_column=Column(SQLJSONB, default=lambda: [])
     )
     
     # 细粒度访问控制
     access_control: Optional[Dict[str, List[int]]] = Field(
         default={"read": [], "write": [], "delete": []},
-        sa_column=Column(Text, default='{"read": [], "write": [], "delete": []}')
+        sa_column=Column(SQLJSONB, default=lambda: {"read": [], "write": [], "delete": []})
     )
     
     owner: Optional[User] = Relationship(back_populates="documents")

@@ -3,17 +3,18 @@ KnoSphere 企业级认证服务
 支持 JWT、密码哈希、权限验证
 """
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from core.logger import logger
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 from pydantic import BaseModel
 import secrets
 
-from database import get_session
+from database import get_db, get_session
 from models import User
 
 # 从环境变量读取配置
@@ -81,30 +82,48 @@ class AuthService:
     ) -> Optional[User]:
         """认证用户"""
         try:
-            # 查找用户
-            statement = select(User).where(User.username == username)
+            # 查找用户 - 使用更明确的查询
+            logger.info(f"开始认证用户: {username}")
+            
+            # 使用简单的查询，避免复杂操作
+            statement = select(User).where(
+                User.username == username,
+                User.is_active == True
+            )
+            
             user = db.exec(statement).first()
             
             if not user:
+                logger.warning(f"用户不存在或未激活: {username}")
                 return None
             
+            # 验证密码
             if not AuthService.verify_password(password, user.password_hash):
+                logger.warning(f"密码验证失败: {username}")
                 return None
-            
-            if not getattr(user, 'is_active', True):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="账户已被禁用"
-                )
             
             # 更新最后登录时间
-            user.last_login = datetime.utcnow()
-            db.add(user)
-            db.commit()
-            
+            try:
+                user.last_login = datetime.now(timezone.utc)
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+                logger.info(f"用户登录成功: {username}")
+            except Exception as commit_error:
+                logger.error(f"更新最后登录时间失败: {commit_error}")
+                db.rollback()
+                # 不抛出异常，登录仍然成功
+                
             return user
             
         except Exception as e:
+            logger.error(f"认证失败: {str(e)}")
+            # 确保会话在异常时正确回滚
+            if db:
+                try:
+                    db.rollback()
+                except:
+                    pass
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"认证失败: {str(e)}"
@@ -116,9 +135,9 @@ class AuthService:
         to_encode = data.copy()
         
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire = datetime.now(timezone.utc) + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -128,7 +147,7 @@ class AuthService:
     @staticmethod
     async def get_current_user(
         token: str = Depends(oauth2_scheme),
-        db: Session = Depends(get_session)
+        db: Session = Depends(get_db)  # 使用普通的get_db
     ) -> User:
         """获取当前用户"""
         credentials_exception = HTTPException(
@@ -139,8 +158,8 @@ class AuthService:
         
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id: int = payload.get("sub")
-            username: str = payload.get("username")
+            user_id = int(payload.get("sub") or 0)
+            username = payload.get("username") or ""
             
             if user_id is None or username is None:
                 raise credentials_exception
@@ -180,7 +199,7 @@ class AuthService:
     @staticmethod
     async def require_permission(
         current_user: User = Depends(get_current_active_user),
-        permission: str = None,
+        permission: Optional[str] = None,
         resource: str = "documents"
     ) -> User:
         """检查用户权限"""
@@ -273,7 +292,7 @@ class AuthService:
         db.add(current_user)
         db.commit()
         
-        return {"message": "密码修改成功"}
+        return {"message": "密码修改成功"} 
 
 # 全局认证服务实例
 _auth_service = None

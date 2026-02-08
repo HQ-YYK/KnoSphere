@@ -27,7 +27,7 @@ export default function LoginPage() {
     confirmPassword: '',
   });
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.ChangeEvent) => {
     e.preventDefault();
     setError('');
 
@@ -39,7 +39,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleRegister = async (e: React.ChangeEvent) => {
     e.preventDefault();
     setError('');
 

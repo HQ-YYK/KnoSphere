@@ -7,7 +7,7 @@ from celery import Task
 from sqlmodel import Session, select
 from tasks.celery_app import celery_app
 from core.logger import logger, WorkflowLogger
-from services.embedding import get_embedding_manager, generate_vector
+from services.embedding import generate_vector
 from database import engine
 from models import Document
 
@@ -102,7 +102,6 @@ def process_large_document(self, file_path: str, doc_id: int, user_id: int = Non
         
         # 7. 为每个块生成向量
         vectors = []
-        embedding_manager = get_embedding_manager()
         
         for i, chunk in enumerate(chunks):
             # 根据块的大小动态选择维度
@@ -115,7 +114,7 @@ def process_large_document(self, file_path: str, doc_id: int, user_id: int = Non
                 mode = "fast"
             
             # 生成向量
-            vector = asyncio.run(embedding_manager.generate_vector(chunk, mode=mode))
+            vector = asyncio.run(generate_vector(chunk, mode=mode))
             vectors.append(vector)
             
             # 更新子进度

@@ -3,7 +3,12 @@ import json
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
-import os
+
+# ==================== 全局 logger 实例 ====================
+# 在模块级别导出 logger，这样其他模块可以直接导入使用
+# 例如：from core.logging import logger
+
+# ==================== 日志配置函数 ====================
 
 def setup_logging():
     """配置结构化日志"""
@@ -31,28 +36,17 @@ def setup_logging():
     # JSON 文件输出：生产环境的可解析格式
     logger.add(
         log_dir / "knosphere_api.json.log",
-        format=lambda record: json.dumps({
-            "timestamp": record["time"].isoformat(),
-            "level": record["level"].name,
-            "service": "knosphere-api",
-            "module": record["name"],
-            "function": record["function"],
-            "line": record["line"],
-            "message": record["message"],
-            "extra": record.get("extra", {}),
-            "exception": record.get("exception", None)
-        }),
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
         level="DEBUG",
         rotation="10 MB",
         compression="zip",
-        serialize=True,
         retention="30 days"
     )
     
     # 详细调试日志：包含工作流状态
     logger.add(
         log_dir / "knosphere_workflow.log",
-        format="[{time:YYYY-MM-DD HH:mm:ss}] | {level: <8} | {extra[workflow]} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[workflow]} | {message}",
         level="DEBUG",
         filter=lambda record: "workflow" in record["extra"],
         rotation="5 MB",
@@ -68,9 +62,12 @@ def setup_logging():
         retention="90 days"
     )
     
-    print(f"✅ 日志系统已初始化，日志目录: {log_dir.absolute()}")
+    logger.info(f"✅ 日志系统已初始化，日志目录: {log_dir.absolute()}")
+    return logger
 
-# 初始化日志系统
+# ==================== 初始化日志系统 ====================
+# 可选：在模块导入时自动初始化
+# 如果不需要自动初始化，可以注释掉下面这行
 setup_logging()
 
 # ==================== 结构化日志函数 ====================
@@ -314,3 +311,16 @@ def log_health_check():
     )
     
     return system_info
+
+# ==================== 导出项 ====================
+# 明确导出哪些内容可以被其他模块导入
+__all__ = [
+    'logger',           # loguru logger 实例
+    'setup_logging',    # 日志配置函数
+    'WorkflowLogger',   # 工作流日志类
+    'log_api_request',  # API 请求日志函数
+    'log_api_response', # API 响应日志函数
+    'PerformanceMonitor', # 性能监控类
+    'get_performance_monitor', # 获取性能监控器
+    'log_health_check', # 健康检查函数
+]

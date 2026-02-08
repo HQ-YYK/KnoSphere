@@ -2,7 +2,7 @@ import os
 from typing import List, Optional
 from sqlmodel import Session, select, text
 from models import Document
-from services.embedding import get_embedding_manager
+from services.embedding import generate_vector
 from services.rerank import alibaba_rerank
 
 async def secure_hybrid_search(
@@ -29,8 +29,7 @@ async def secure_hybrid_search(
     """
     
     # 1. 生成问题的向量 (Embedding)
-    embedding_manager = get_embedding_manager()
-    query_vector = await embedding_manager.generate_vector(query)
+    query_vector = await generate_vector(query)
     
     # 2. 执行安全向量搜索
     # 使用我们创建的 secure_vector_search 函数

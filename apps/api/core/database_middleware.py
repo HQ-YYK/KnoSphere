@@ -1,37 +1,17 @@
 """
 数据库中间件 - 用于设置 PostgreSQL RLS 上下文
 """
-import logging
+from typing import Optional
+from core.logger import logger
 from fastapi import Request
-from sqlalchemy import event
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 import ipaddress
+from database import engine
 
-logger = logging.getLogger(__name__)
 
-class DatabaseSessionMiddleware(BaseHTTPMiddleware):
-    """数据库会话中间件 - 设置 RLS 上下文"""
-    
-    async def dispatch(self, request: Request, call_next):
-        """处理请求"""
-        # 获取用户ID和客户端信息
-        user_id = getattr(request.state, 'user_id', None)
-        client_ip = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent", "")
-        
-        # 设置数据库上下文
-        request.state.db_context = {
-            "user_id": user_id,
-            "client_ip": client_ip,
-            "user_agent": user_agent
-        }
-        
-        response = await call_next(request)
-        return response
-
-def setup_rls_context(session: Session, user_id: int = None, **context):
+def setup_rls_context(session: Session, user_id: Optional[int] = None, **context):
     """
     设置 PostgreSQL RLS 上下文
     
@@ -45,62 +25,76 @@ def setup_rls_context(session: Session, user_id: int = None, **context):
     
     try:
         # 设置当前用户ID
-        session.execute(f"SET app.current_user_id = '{user_id}'")
+        session.execute(text(f"SET app.current_user_id = '{user_id}'"))
         
         # 设置客户端IP
         client_ip = context.get('client_ip')
         if client_ip:
-            # 验证IP地址
             try:
                 ipaddress.ip_address(client_ip)
-                session.execute(f"SET app.client_ip = '{client_ip}'")
+                session.execute(text(f"SET app.client_ip = '{client_ip}'"))
             except ValueError:
-                session.execute("SET app.client_ip = '0.0.0.0'")
+                session.execute(text("SET app.client_ip = '0.0.0.0'"))
         
         # 设置用户代理
-        user_agent = context.get('user_agent', '')[:500]  # 限制长度
-        session.execute(f"SET app.user_agent = '{user_agent}'")
+        user_agent = context.get('user_agent', '')[:500]
+        session.execute(text(f"SET app.user_agent = '{user_agent}'"))
         
         # 设置其他上下文变量
-        session.execute("SET app.request_time = current_timestamp")
+        session.execute(text("SET app.request_time = current_timestamp"))
+        
+        session.commit()  # 立即提交设置
         
     except Exception as e:
         logger.warning(f"设置 RLS 上下文失败: {e}")
+        session.rollback()
         # 回退到安全默认值
-        session.execute("SET app.current_user_id = '0'")
-        session.execute("SET app.client_ip = '0.0.0.0'")
-        session.execute("SET app.user_agent = ''")
+        try:
+            session.execute(text("SET app.current_user_id = '0'"))
+            session.execute(text("SET app.client_ip = '0.0.0.0'"))
+            session.execute(text("SET app.user_agent = ''"))
+            session.commit()
+        except:
+            pass
 
-@event.listens_for(Session, "after_begin")
-def setup_rls(session, transaction, connection):
-    """会话开始时设置 RLS 上下文"""
-    # 从会话的 info 字典中获取上下文
-    context = getattr(session, '_rls_context', {})
-    user_id = context.get('user_id', 0)
+class DatabaseSessionMiddleware(BaseHTTPMiddleware):
+    """数据库会话中间件 - 设置 RLS 上下文"""
     
-    # 设置 RLS 上下文
-    setup_rls_context(session, user_id, **context)
+    async def dispatch(self, request: Request, call_next):
+        """处理请求"""
+        # 获取用户ID和客户端信息（登录前可能没有用户ID）
+        user_id = getattr(request.state, 'user_id', None)
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent", "")
+        
+        # 存储到请求状态
+        request.state.db_context = {
+            "user_id": user_id,
+            "client_ip": client_ip,
+            "user_agent": user_agent
+        }
+        
+        response = await call_next(request)
+        return response
 
-def get_db_with_context(request: Request) -> Session:
+def get_secure_db(request: Request):
     """
     获取带有 RLS 上下文的数据库会话
-    
-    这是一个替代的依赖项，用于需要 RLS 的接口
+    用于需要RLS保护的路由
     """
-    from database import SessionLocal
-    
-    db = SessionLocal()
-    
+    # 创建新的会话
+    session = Session(engine)
     try:
-        # 设置 RLS 上下文
+        # 从请求状态获取上下文
         context = getattr(request.state, 'db_context', {})
-        db._rls_context = context
         
-        yield db
+        # 设置RLS上下文
+        setup_rls_context(session, **context)
+        
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
-        db.close()
-
-# 创建需要 RLS 的数据库会话依赖项
-from fastapi import Depends
-def get_secure_db(request: Request) -> Session:
-    return next(get_db_with_context(request))
+        session.close()
