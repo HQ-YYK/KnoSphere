@@ -21,7 +21,7 @@ from tasks.celery_app import celery_app
 
 
 from core.logger import logger, log_api_response
-from database import get_db, init_db, engine, get_session
+from database import get_db, init_db, engine
 from models import Document, User
 
 from services.agentic_chat import get_agentic_chat_service
@@ -72,7 +72,7 @@ app.add_middleware(DatabaseSessionMiddleware)
 @app.post("/auth/register", response_model=dict)
 async def register(
     user_data: UserCreate,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """用户注册"""
     from core.auth import AuthService
@@ -172,7 +172,7 @@ async def get_me(
 async def change_password(
     password_data: PasswordChange,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """修改密码"""
     from core.auth import AuthService
@@ -205,7 +205,7 @@ async def change_password(
 async def upload_large_document_async(
     file: UploadFile = File(...),
     user_id: Optional[int] = None,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """
     异步上传大文档
@@ -282,7 +282,7 @@ async def upload_large_document_async(
 async def upload_batch_documents(
     files: List[UploadFile] = File(...),
     user_id: Optional[int] = None,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """
     批量上传文档
@@ -452,7 +452,7 @@ async def get_queue_status():
 
 @app.get("/documents/processing")
 async def get_processing_documents(
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     limit: int = 20,
     offset: int = 0
 ):
@@ -479,7 +479,7 @@ async def get_processing_documents(
 
 @app.get("/documents/recent")
 async def get_recent_documents(
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     limit: int = 20,
     offset: int = 0
 ):
@@ -512,7 +512,7 @@ async def get_recent_documents(
 @app.post("/chat/stream")
 async def chat_stream(
     request: dict,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """
     流式聊天接口 - 支持思考过程可视化

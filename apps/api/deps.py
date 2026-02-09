@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 import os
 import secrets
 from fastapi.security import OAuth2PasswordBearer
-from database import get_session
+from database import get_db
 
 # 从环境变量读取配置
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
@@ -17,10 +17,9 @@ ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 # OAuth2 方案
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db) 
 ):
     """获取当前用户"""
     from models import User

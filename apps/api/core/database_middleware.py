@@ -10,7 +10,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import ipaddress
 from database import engine
 
-
 def setup_rls_context(session: Session, user_id: Optional[int] = None, **context):
     """
     设置 PostgreSQL RLS 上下文
@@ -77,9 +76,10 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+# 修改：使用生成器函数而不是上下文管理器
 def get_secure_db(request: Request):
     """
-    获取带有 RLS 上下文的数据库会话
+    获取带有 RLS 上下文的数据库会话（生成器函数）
     用于需要RLS保护的路由
     """
     # 创建新的会话

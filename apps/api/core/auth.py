@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from pydantic import BaseModel
 import secrets
 
-from database import get_db, get_session
+from database import get_db
 from models import User
 
 # 从环境变量读取配置
@@ -317,7 +317,7 @@ class AuthService:
     async def change_password(
         password_data: PasswordChange,
         current_user: User = Depends(get_current_active_user),
-        db: Session = Depends(get_session)
+        db: Session = Depends(get_db)
     ) -> Dict[str, str]:
         """修改密码"""
         # 验证当前密码
