@@ -2,6 +2,7 @@
 数据库中间件 - 用于设置 PostgreSQL RLS 上下文
 """
 from typing import Optional
+import uuid
 from core.logger import logger
 from fastapi import Request
 from sqlalchemy import text
@@ -10,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import ipaddress
 from database import engine
 
-def setup_rls_context(session: Session, user_id: Optional[int] = None, **context):
+def setup_rls_context(session: Session, user_id: Optional[str] = None, **context):
     """
     设置 PostgreSQL RLS 上下文
     
@@ -20,7 +21,7 @@ def setup_rls_context(session: Session, user_id: Optional[int] = None, **context
     - context: 其他上下文信息
     """
     if not user_id:
-        user_id = 0  # 匿名用户
+        user_id = str(uuid.uuid4())  # 匿名用户
     
     try:
         # 设置当前用户ID

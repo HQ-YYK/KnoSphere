@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional
+import uuid
 from sqlmodel import Session, select, text
 from models import Document
 from services.embedding import generate_vector
@@ -8,7 +9,7 @@ from services.rerank import alibaba_rerank
 async def secure_hybrid_search(
     query: str, 
     db: Session, 
-    user_id: int,
+    user_id: str,
     top_k: int = 15, 
     final_k: int = 3,
     include_public: bool = True,
@@ -107,7 +108,7 @@ async def secure_hybrid_search(
 async def user_document_search(
     query: str,
     db: Session,
-    user_id: int,
+    user_id: str,
     tags: Optional[List[str]] = None,
     is_public: Optional[bool] = None,
     limit: int = 20,
@@ -174,5 +175,5 @@ async def hybrid_search(query: str, db: Session, **kwargs):
     
     注意：这个接口需要从请求上下文中获取用户ID
     """
-    user_id = getattr(db, '_rls_context', {}).get('user_id', 0)
+    user_id = getattr(db, '_rls_context', {}).get('user_id', str(uuid.uuid4()))
     return await secure_hybrid_search(query, db, user_id, **kwargs)

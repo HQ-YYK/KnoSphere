@@ -13,6 +13,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 from pydantic import BaseModel
 import secrets
+import uuid
 
 from database import get_db
 from models import User
@@ -31,13 +32,13 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_in: int
-    user_id: int
+    user_id: str 
     username: str
     permissions: Dict[str, Any]
 
 class TokenData(BaseModel):
     """令牌数据模型"""
-    user_id: Optional[int] = None
+    user_id: Optional[str] = None  # 改为字符串类型
     username: Optional[str] = None
 
 class UserCreate(BaseModel):
@@ -203,19 +204,25 @@ class AuthService:
         
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id = int(payload.get("sub") or 0)
+            user_id_str = payload.get("sub")
             username = payload.get("username") or ""
             
-            if user_id is None or username is None:
+            if not user_id_str or not username:
                 raise credentials_exception
             
-            token_data = TokenData(user_id=user_id, username=username)
+            # 尝试将 user_id 转换为 UUID
+            try:
+                user_id = uuid.UUID(user_id_str)
+            except ValueError:
+                raise credentials_exception
+            
+            token_data = TokenData(user_id=user_id_str, username=username)
             
         except JWTError:
             raise credentials_exception
         
-        # 查找用户
-        statement = select(User).where(User.id == token_data.user_id)
+        # 查找用户 - 注意：这里要比较字符串形式的 UUID
+        statement = select(User).where(User.id == user_id_str)
         user = db.exec(statement).first()
         
         if user is None:

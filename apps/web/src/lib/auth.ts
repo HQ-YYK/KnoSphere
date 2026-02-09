@@ -5,7 +5,7 @@
 
 // 用户接口
 export interface User {
-  id: number;
+  id: string;
   username: string;
   email: string;
   is_active: boolean;
@@ -19,7 +19,7 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
-  user_id: number;
+  user_id: string;
   username: string;
   permissions: Record<string, any>;
 }

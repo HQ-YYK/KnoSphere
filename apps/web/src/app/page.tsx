@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileUpload } from "@/components/file-upload";
 import { BrainCircuit, Database, Cpu, Sparkles, Shield, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { KnowledgeGraph } from "@/components/knowledge-graph";
+import { GraphRAGQuery } from "@/components/graph-rag-query";
 
 function HomePage() {
   const { user, logout } = useAuth();
@@ -91,10 +93,12 @@ function HomePage() {
 
           {/* 主要功能区域 */}
           <Tabs defaultValue="chat" className="w-full">
-            <TabsList className="grid w-full md:w-auto grid-cols-3 md:inline-flex bg-zinc-900/50 border border-zinc-800">
-              <TabsTrigger value="chat" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-blue-600">
-                <BrainCircuit className="w-3 h-3 mr-1" />
-                智能助手
+            <TabsList className="grid w-full md:w-auto grid-cols-4 md:inline-flex bg-zinc-900/50 border border-zinc-800">
+              <TabsTrigger value="chat" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-emerald-600">
+                智能对话
+              </TabsTrigger>
+              <TabsTrigger value="graph" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-pink-600">
+                知识图谱
               </TabsTrigger>
               <TabsTrigger value="upload" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600">
                 知识录入
@@ -119,6 +123,39 @@ function HomePage() {
                 </CardHeader>
                 <CardContent>
                   <AgenticChatBox />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* 知识图谱标签页 */}
+            <TabsContent value="graph" className="space-y-6">
+              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="text-xl flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 animate-pulse"></div>
+                    知识图谱探索
+                  </CardTitle>
+                  <p className="text-zinc-400 text-sm">
+                    可视化您的知识库，发现实体之间的隐藏关系
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <KnowledgeGraph />
+                </CardContent>
+              </Card>
+              
+              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="text-xl flex items-center gap-2">
+                    <BrainCircuit className="w-5 h-5 text-blue-400" />
+                    GraphRAG 深度查询
+                  </CardTitle>
+                  <p className="text-zinc-400 text-sm">
+                    结合文档内容和知识图谱的智能查询，回答复杂问题
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <GraphRAGQuery />
                 </CardContent>
               </Card>
             </TabsContent>
