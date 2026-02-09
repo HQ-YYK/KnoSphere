@@ -1,7 +1,10 @@
 from typing import TypedDict, Annotated, List, Optional
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from services.tools import get_tool_manager
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 import asyncio
 from services.search import hybrid_search
@@ -32,6 +35,10 @@ class AgentState(TypedDict):
     retry_count: int
     # 是否相关
     is_relevant: Optional[bool]
+    # 添加工具相关字段
+    tool_calls: List[dict]  # 工具调用记录
+    tool_results: List[dict]  # 工具执行结果
+    should_use_tools: bool  # 是否应该使用工具
 
 # ==================== 模型定义 ====================
 
@@ -335,6 +342,138 @@ async def fallback_node(state: AgentState, config: dict) -> dict:
         }]
     }
 
+async def decide_tools_node(state: AgentState, config: dict) -> dict:
+    """决定是否使用工具节点"""
+    try:
+        messages = state.get("messages", [])
+        last_message = messages[-1]
+        query = getattr(last_message, 'content', str(last_message))
+        
+        # 使用 LLM 判断是否需要工具
+        llm_service = get_llm_service()
+        
+        system_prompt = f"""分析以下问题，判断是否需要调用外部工具来解答。
+        
+用户问题: {query}
+
+请分析：
+1. 是否需要实时信息（天气、新闻、股票等）？
+2. 是否需要计算或单位转换？
+3. 是否需要搜索最新网络信息？
+4. 是否需要在知识库基础上补充外部信息？
+
+如果需要任何工具，回答"yes"，否则回答"no"。
+只回答"yes"或"no"，不要解释。"""
+        
+        response = ""
+        async for chunk in llm_service.stream_response(system_prompt, "请分析是否需要工具"):
+            response += chunk
+        
+        should_use_tools = "yes" in response.lower()
+        
+        return {
+            "should_use_tools": should_use_tools,
+            "current_node": "decide_tools",
+            "node_history": state.get("node_history", []) + [{
+                "node": "decide_tools",
+                "timestamp": datetime.now().isoformat(),
+                "status": "success",
+                "decision": should_use_tools,
+                "reason": response[:100]
+            }]
+        }
+    except Exception as e:
+        print(f"❌ 工具决策节点失败: {e}")
+        return {
+            "should_use_tools": False,
+            "current_node": "decide_tools",
+            "node_history": state.get("node_history", []) + [{
+                "node": "decide_tools",
+                "timestamp": datetime.now().isoformat(),
+                "status": "error",
+                "error": str(e)
+            }]
+        }
+
+async def tools_node(state: AgentState, config: dict) -> dict:
+    """工具调用节点"""
+    try:
+        tool_manager = get_tool_manager()
+        tools = tool_manager.get_tools_list()
+        
+        # 绑定工具到LLM
+        llm_service = get_llm_service()
+        llm_with_tools = llm_service.bind_tools(tools)
+        
+        # 获取对话历史
+        messages = state.get("messages", [])
+        
+        # 调用LLM（它会决定使用哪个工具）
+        response = await llm_with_tools.ainvoke(messages)
+        
+        # 检查是否有工具调用
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            tool_calls = []
+            tool_results = []
+            
+            for tool_call in response.tool_calls:
+                # 执行工具
+                result = await tool_manager.execute_tool(
+                    tool_call['name'], 
+                    **tool_call['args']
+                )
+                
+                tool_calls.append(tool_call)
+                tool_results.append(result)
+                
+                # 添加工具消息到对话历史
+                tool_message = ToolMessage(
+                    content=json.dumps(result, ensure_ascii=False),
+                    tool_call_id=tool_call.get('id', f"call_{len(tool_calls)}")
+                )
+                messages.append(tool_message)
+            
+            return {
+                "messages": messages + [response],  # 添加AI的响应
+                "tool_calls": tool_calls,
+                "tool_results": tool_results,
+                "current_node": "tools",
+                "node_history": state.get("node_history", []) + [{
+                    "node": "tools",
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "success",
+                    "tools_called": len(tool_calls),
+                    "tool_names": [tc['name'] for tc in tool_calls]
+                }]
+            }
+        else:
+            # 没有工具调用，直接返回响应
+            return {
+                "messages": messages + [response],
+                "generation": response.content,
+                "current_node": "tools",
+                "node_history": state.get("node_history", []) + [{
+                    "node": "tools",
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "success",
+                    "note": "no_tools_called"
+                }]
+            }
+            
+    except Exception as e:
+        print(f"❌ 工具节点失败: {e}")
+        return {
+            "error": f"工具调用失败: {str(e)}",
+            "current_node": "tools",
+            "node_history": state.get("node_history", []) + [{
+                "node": "tools",
+                "timestamp": datetime.now().isoformat(),
+                "status": "error",
+                "error": str(e)
+            }]
+        }
+
+
 # ==================== 路由逻辑 ====================
 
 def should_retry(state: AgentState) -> str:
@@ -367,7 +506,7 @@ def route_after_retry(state: AgentState) -> str:
 # ==================== 构建工作流 ====================
 
 def create_agent_workflow():
-    """创建代理工作流"""
+    """创建代理工作流 - 增强版，支持工具调用"""
     
     # 创建状态图
     workflow = StateGraph(AgentState)
@@ -379,12 +518,36 @@ def create_agent_workflow():
     workflow.add_node("rewrite", rewrite_node)
     workflow.add_node("generate", generate_node)
     workflow.add_node("fallback", fallback_node)
+    workflow.add_node("decide_tools", decide_tools_node)  # 新增
+    workflow.add_node("tools", tools_node)  # 新增
     
     # 设置入口点
     workflow.set_entry_point("start")
+
+    # 先决定是否用工具
+    workflow.add_edge("start", "decide_tools")
+
+    # 条件边：决定是否使用工具
+    workflow.add_conditional_edges(
+        "decide_tools",
+        lambda state: "tools" if state.get("should_use_tools") else "retrieve",
+        {
+            "tools": "tools",
+            "retrieve": "retrieve"
+        }
+    )
     
-    # 添加边
-    workflow.add_edge("start", "retrieve")
+    # 工具调用后，进入正常的RAG流程或直接生成
+    workflow.add_conditional_edges(
+        "tools",
+        lambda state: "generate" if state.get("generation") else "retrieve",
+        {
+            "generate": "generate",
+            "retrieve": "retrieve"
+        }
+    )
+    
+    # 原有的RAG流程保持不变
     workflow.add_edge("retrieve", "grade")
     
     # 条件边：评估后的路由

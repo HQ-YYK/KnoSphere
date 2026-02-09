@@ -23,13 +23,18 @@ import { Badge } from "@/components/ui/badge";
 
 interface Message {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: Date;
   thinkingSteps?: any[];
-  mode?: "full" | "simple";
+  mode?: "full" | "simple" | "agentic";
   workflowId?: string;
   isThinking?: boolean;
+  tool_calls?: Array<{  // 工具调用
+    name: string;
+    args: any;
+    result?: any;
+  }>;
 }
 
 interface ThinkingStep {
@@ -54,7 +59,9 @@ export function AgenticChatBox() {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [chatMode, setChatMode] = useState<"full" | "simple">("full");
+  const [chatMode, setChatMode] = useState<"full" | "simple" | "agentic">("agentic");
+  const [toolExecutions, setToolExecutions] = useState<any[]>([]);
+  const [activeTools, setActiveTools] = useState<string[]>([]);
   const [activeThinking, setActiveThinking] = useState<ThinkingStep[]>([]);
   const [currentWorkflowId, setCurrentWorkflowId] = useState<string | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -165,6 +172,24 @@ export function AgenticChatBox() {
   async function sendMessage() {
     const userMessage = input.trim();
     if (!userMessage || isLoading) return;
+
+    // 根据模式选择不同的端点
+    let endpoint = "/chat/stream";
+    let requestBody = {
+      query: userMessage,
+      mode: chatMode === "simple" ? "simple" : "full",
+      top_k: 10,
+      final_k: 3
+    };
+    
+    if (chatMode === "agentic") {
+      endpoint = "/agent/execute";
+      requestBody = {
+        query: userMessage,
+        use_knowledge: true,
+        stream: false
+      };
+    }
     
     // 添加用户消息
     const userMsg: Message = {
@@ -287,8 +312,12 @@ export function AgenticChatBox() {
             </div>
             
             <div className="flex items-center gap-2">
-              <Tabs value={chatMode} onValueChange={(v) => setChatMode(v as "full" | "simple")}>
+              <Tabs value={chatMode} onValueChange={(v) => setChatMode(v as "full" | "simple" | "agentic")}>
                 <TabsList className="bg-zinc-800/50 border border-zinc-700">
+                  <TabsTrigger value="agentic" className="data-[state=active]:bg-purple-600">
+                    <BrainCircuit className="w-3 h-3 mr-1" />
+                    智能模式
+                  </TabsTrigger>
                   <TabsTrigger value="full" className="data-[state=active]:bg-blue-600">
                     <Sparkles className="w-3 h-3 mr-1" />
                     完整模式
@@ -371,6 +400,30 @@ export function AgenticChatBox() {
                                   "bg-blue-500"
                                 }`}></div>
                                 <span className="truncate">{step.data}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {message.tool_calls && message.tool_calls.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-purple-700/50">
+                          <div className="flex items-center gap-2 text-xs text-purple-400 mb-2">
+                            <Wrench className="w-3 h-3" />
+                            <span>工具调用 ({message.tool_calls.length} 个)</span>
+                          </div>
+                          <div className="space-y-2">
+                            {message.tool_calls.map((tool: any, idx: number) => (
+                              <div key={idx} className="text-xs bg-purple-900/20 rounded p-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                                  <span className="font-medium">{tool.name}</span>
+                                </div>
+                                {tool.result && (
+                                  <div className="text-purple-300 text-xs mt-1">
+                                    {JSON.stringify(tool.result).slice(0, 100)}...
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>

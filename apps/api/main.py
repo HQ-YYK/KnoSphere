@@ -25,6 +25,7 @@ from database import get_db, init_db, engine
 from models import Document, User
 
 from services.agentic_chat import get_agentic_chat_service
+from services.tools import get_tool_manager
 
 # 创建上传目录
 UPLOAD_DIR = Path("uploads")
@@ -648,6 +649,168 @@ async def secure_chat(
         raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
 
 
+# ==================== 智能体 -- 支持工具调用 ====================
+
+@app.post("/agent/execute")
+async def agent_execute(
+    request: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_secure_db)
+):
+    """
+    智能体执行接口 - 支持工具调用
+    
+    请求体:
+    {
+        "query": "用户问题",
+        "use_knowledge": true,  # 是否使用知识库
+        "stream": false         # 是否流式输出
+    }
+    """
+    query = request.get("query", "").strip()
+    use_knowledge = request.get("use_knowledge", True)
+    stream = request.get("stream", False)
+    
+    if not query:
+        raise HTTPException(status_code=400, detail="请输入问题")
+    
+    # 获取知识库上下文
+    context = ""
+    if use_knowledge:
+        from services.search import secure_hybrid_search
+        try:
+            docs = await secure_hybrid_search(
+                query=query,
+                db=db,
+                user_id=current_user.id,
+                top_k=5,
+                final_k=2
+            )
+            if docs:
+                context = "\n".join([doc.get('content', '')[:500] for doc in docs[:2]])
+        except Exception as e:
+            logger.warning(f"知识库搜索失败: {e}")
+    
+    if stream:
+        # 流式响应
+        async def event_generator():
+            try:
+                # 创建工作流（带writer）
+                from services.agent_graph import get_agent_workflow
+                app = get_agent_workflow()
+                
+                # 初始化状态
+                initial_state = {
+                    "messages": [HumanMessage(content=query)],
+                    "documents": [],
+                    "generation": "",
+                    "current_node": "start",
+                    "node_history": [],
+                    "start_time": datetime.now(),
+                    "error": None,
+                    "retry_count": 0,
+                    "is_relevant": None
+                }
+                
+                # 执行工作流
+                async for event in app.astream(initial_state, {"db": db}):
+                    for key, value in event.items():
+                        if key == "generation" and value:
+                            yield f"data: {json.dumps({'type': 'chunk', 'data': value})}\n\n"
+                        elif key == "tool_calls":
+                            for tool_call in value:
+                                yield f"data: {json.dumps({'type': 'tool_call', 'data': tool_call})}\n\n"
+                        elif key == "tool_results":
+                            for tool_result in value:
+                                yield f"data: {json.dumps({'type': 'tool_result', 'data': tool_result})}\n\n"
+                
+                yield f"data: {json.dumps({'type': 'complete', 'data': '完成'})}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'data': f'执行失败: {str(e)}'})}\n\n"
+        
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    else:
+        # 非流式响应
+        try:
+            from services.agent_graph import get_agent_workflow
+            app = get_agent_workflow()
+            
+            initial_state = {
+                "messages": [HumanMessage(content=query)],
+                "documents": [],
+                "generation": "",
+                "current_node": "start",
+                "node_history": [],
+                "start_time": datetime.now(),
+                "error": None,
+                "retry_count": 0,
+                "is_relevant": None
+            }
+            
+            result = await app.ainvoke(initial_state, {"db": db})
+            
+            return {
+                "success": True,
+                "query": query,
+                "response": result.get("generation", ""),
+                "tools_used": result.get("tool_calls", []),
+                "tools_count": len(result.get("tool_calls", [])),
+                "tool_results": result.get("tool_results", []),
+                "user_id": current_user.id,
+                "node_history": result.get("node_history", [])
+            }
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"智能体执行失败: {str(e)}")
+
+@app.get("/agent/tools")
+async def list_available_tools(
+    current_user: User = Depends(get_current_active_user)
+):
+    """列出所有可用工具"""
+    tool_manager = get_tool_manager()
+    tools = tool_manager.get_tools_description()
+    
+    return {
+        "tools": tools,
+        "total": len(tools),
+        "user_id": current_user.id
+    }
+
+@app.post("/agent/tools/execute")
+async def execute_specific_tool(
+    request: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    """直接执行特定工具"""
+    tool_name = request.get("tool_name", "").strip()
+    tool_args = request.get("tool_args", {})
+    
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="请指定工具名称")
+    
+    tool_manager = get_tool_manager()
+    
+    # 执行工具
+    result = await tool_manager.execute_tool(tool_name, **tool_args)
+    
+    return {
+        "success": result.get("success", False),
+        "tool_name": tool_name,
+        "tool_args": tool_args,
+        "result": result,
+        "user_id": current_user.id,
+        "timestamp": datetime.now().isoformat()
+    }
 
 # ==================== 保留原有接口 ====================
 

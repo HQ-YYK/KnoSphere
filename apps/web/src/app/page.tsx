@@ -91,11 +91,12 @@ function HomePage() {
 
           {/* 主要功能区域 */}
           <Tabs defaultValue="chat" className="w-full">
-            <TabsList className="grid w-full md:w-auto grid-cols-2 md:inline-flex bg-zinc-900/50 border border-zinc-800">
-              <TabsTrigger value="chat" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-emerald-600">
-                智能对话
+            <TabsList className="grid w-full md:w-auto grid-cols-3 md:inline-flex bg-zinc-900/50 border border-zinc-800">
+              <TabsTrigger value="chat" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-blue-600">
+                <BrainCircuit className="w-3 h-3 mr-1" />
+                智能助手
               </TabsTrigger>
-              <TabsTrigger value="upload" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-pink-600">
+              <TabsTrigger value="upload" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600">
                 知识录入
               </TabsTrigger>
               {user?.permissions?.admin && (
@@ -109,11 +110,11 @@ function HomePage() {
               <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
                 <CardHeader>
                   <CardTitle className="text-xl flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 animate-pulse"></div>
-                    AI 智能对话
+                    <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse"></div>
+                    智能助手（支持工具调用）
                   </CardTitle>
                   <p className="text-zinc-400 text-sm">
-                    安全模式：所有检索均在您的私有空间进行
+                    支持搜索、天气查询、计算、单位转换等多种工具调用
                   </p>
                 </CardHeader>
                 <CardContent>
