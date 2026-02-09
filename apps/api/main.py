@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from deps import get_current_active_user
-from core.auth import ACCESS_TOKEN_EXPIRE_MINUTES, Token, UserCreate, PasswordChange
+from core.auth import ACCESS_TOKEN_EXPIRE_MINUTES, LoginRequest, Token, UserCreate, PasswordChange
 from core.database_middleware import get_secure_db
 
 # 导入 Celery 任务
@@ -125,7 +125,7 @@ async def register(
 
 @app.post("/auth/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    form_data: LoginRequest,
     db: Session = Depends(get_db)  # 使用普通的get_db，而不是带RLS的
 ):
     """用户登录"""
@@ -135,8 +135,7 @@ async def login(
     
     # 使用认证服务的统一方法
     user = await auth_service.authenticate_user(
-        form_data.username, 
-        form_data.password, 
+        form_data, 
         db
     )
     

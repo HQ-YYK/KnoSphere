@@ -58,6 +58,10 @@ class PasswordChange(BaseModel):
     current_password: str
     new_password: str
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 class AuthService:
     """认证服务类"""
     
@@ -99,33 +103,35 @@ class AuthService:
     
     @staticmethod
     async def authenticate_user(
-        username: str, 
-        password: str, 
+        credentials: LoginRequest,
         db: Session
     ) -> Optional[User]:
         """认证用户"""
         try:
+            username = credentials.username
+            password = credentials.password
+
             # 查找用户
-            logger.info(f"开始认证用户: {username}")
+            logger.info(f"开始认证用户: {credentials.username}")
             
             statement = select(User).where(
-                User.username == username,
+                User.username == credentials.username,
                 User.is_active == True
             )
             
             user = db.exec(statement).first()
 
             if not user:
-                logger.warning(f"用户不存在或未激活: {username}")
+                logger.warning(f"用户不存在或未激活: {credentials.username}")
                 return None
             
             # 验证密码
             if not user.password_hash:
-                logger.warning(f"用户没有密码哈希: {username}")
+                logger.warning(f"用户没有密码哈希: {credentials.username}")
                 return None
             
             # 记录详细信息用于调试
-            logger.info(f"用户: {username}, 密码哈希前4位: {user.password_hash[:4]}")
+            logger.info(f"用户: {credentials.username}, 密码哈希前4位: {user.password_hash[:4]}")
             
             # 使用原生 bcrypt 验证
             is_valid = AuthService.verify_password(password, user.password_hash)
