@@ -513,6 +513,101 @@ async def get_recent_documents(
         "total": len(documents)
     }
 
+@app.get("/documents/{document_id}")
+async def get_document_detail(
+    document_id: int,
+    db: Session = Depends(get_secure_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取文档详情"""
+    from sqlmodel import select
+    
+    # 获取文档
+    document = db.get(Document, document_id)
+    
+    if not document or document.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="文档不存在或无权访问")
+    
+    # 获取文档中的实体
+    from models import EntityDocumentLink
+    entity_links = db.exec(
+        select(EntityDocumentLink).where(
+            EntityDocumentLink.document_id == document_id
+        )
+    ).all()
+    
+    entities = []
+    for link in entity_links:
+        entity = db.get(Entity, link.entity_id)
+        if entity:
+            entities.append({
+                "id": entity.id,
+                "name": entity.name,
+                "type": entity.entity_type,
+                "frequency_in_doc": link.frequency_in_doc,
+                "significance": link.significance
+            })
+    
+    # 获取与文档相关的关系
+    edges = db.exec(
+        select(GraphEdge).where(
+            GraphEdge.source_document_id == document_id,
+            GraphEdge.user_id == current_user.id
+        )
+    ).all()
+    
+    # 构建文档统计
+    stats = {
+        "content_length": len(document.content) if document.content else 0,
+        "entity_count": len(entities),
+        "relation_count": len(edges),
+        "embedding_status": "已向量化" if document.embedding else "未向量化",
+        "graph_extracted": "已提取" if document.graph_extracted else "未提取",
+        "graph_extraction_time": document.graph_extraction_time.isoformat() if document.graph_extraction_time else None
+    }
+    
+    return {
+        "document": {
+            "id": document.id,
+            "title": document.title,
+            "content": document.content,
+            "created_at": document.created_at.isoformat() if document.created_at else None,
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+            "user_id": document.user_id,
+            "embedding": "已生成" if document.embedding else "未生成",
+            "graph_extracted": document.graph_extracted
+        },
+        "entities": entities,
+        "relations": [edge.to_dict() for edge in edges],
+        "stats": stats,
+        "preview_contexts": _extract_entity_contexts(document.content, entities[:5])  # 提取实体出现的上下文
+    }
+
+def _extract_entity_contexts(content: str, entities: list, context_size: int = 200) -> list:
+    """提取实体在文档中出现的上下文"""
+    if not content or not entities:
+        return []
+    
+    contexts = []
+    for entity in entities:
+        entity_name = entity["name"]
+        # 查找实体在内容中的位置
+        pos = content.lower().find(entity_name.lower())
+        if pos != -1:
+            start = max(0, pos - context_size)
+            end = min(len(content), pos + len(entity_name) + context_size)
+            context = content[start:end]
+            
+            # 高亮实体名称
+            context = context.replace(entity_name, f"**{entity_name}**")
+            
+            contexts.append({
+                "entity": entity_name,
+                "context": f"...{context}...",
+                "position": pos
+            })
+    
+    return contexts[:5]  # 返回前5个上下文
 
 # ==================== 流式聊天接口 ====================
 
@@ -887,7 +982,8 @@ async def get_edges(
 async def get_graph_data(
     db: Session = Depends(get_secure_db),
     current_user: User = Depends(get_current_active_user),
-    document_id: Optional[int] = None
+    document_id: Optional[int] = None,
+    include_documents: bool = True  # 新增参数：是否包含文档信息
 ):
     """获取图谱数据（用于可视化）"""
     from sqlmodel import select
@@ -904,7 +1000,7 @@ async def get_graph_data(
         # 获取所有实体（按频率排序）
         stmt = select(Entity).where(
             Entity.user_id == current_user.id
-        ).order_by(Entity.frequency.desc()).limit(50)
+        ).order_by(Entity.frequency.desc()).limit(100)  # 增加到100个
     
     entities = db.exec(stmt).all()
     
@@ -921,13 +1017,39 @@ async def get_graph_data(
                 GraphEdge.target_id.in_(entity_ids)
             ),
             GraphEdge.user_id == current_user.id
-        ).limit(200)
+        ).limit(300)
     ).all()
+    
+    # 如果要求包含文档信息，获取实体的关联文档
+    entity_docs_map = {}
+    if include_documents:
+        from models import EntityDocumentLink
+        # 查询所有实体的文档关联
+        doc_links = db.exec(
+            select(EntityDocumentLink).where(
+                EntityDocumentLink.entity_id.in_(entity_ids)
+            )
+        ).all()
+        
+        # 构建实体到文档的映射
+        for link in doc_links:
+            if link.entity_id not in entity_docs_map:
+                entity_docs_map[link.entity_id] = []
+            
+            # 获取文档详情
+            doc = db.get(Document, link.document_id)
+            if doc and doc.user_id == current_user.id:  # 确保文档属于当前用户
+                entity_docs_map[link.entity_id].append({
+                    "id": doc.id,
+                    "title": doc.title,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "relevance": link.significance  # 关联程度
+                })
     
     # 构建节点数据
     nodes = []
     for entity in entities:
-        nodes.append({
+        node_data = {
             "id": entity.id,
             "name": entity.name,
             "type": entity.entity_type,
@@ -935,8 +1057,20 @@ async def get_graph_data(
             "group": _get_entity_group(entity.entity_type),
             "frequency": entity.frequency,
             "confidence": entity.confidence,
-            "documents": len(entity.documents) if hasattr(entity, 'documents') else 0
-        })
+            "document_count": len(entity.documents) if hasattr(entity, 'documents') else 0
+        }
+        
+        # 添加文档信息
+        if include_documents and entity.id in entity_docs_map:
+            docs = entity_docs_map[entity.id]
+            node_data["documents"] = docs
+            # 按关联程度排序，取最相关的文档
+            if docs:
+                sorted_docs = sorted(docs, key=lambda x: x.get("relevance", 0), reverse=True)
+                node_data["primary_doc_id"] = sorted_docs[0]["id"]
+                node_data["primary_doc_title"] = sorted_docs[0]["title"]
+        
+        nodes.append(node_data)
     
     # 构建边数据
     links = []
@@ -947,11 +1081,27 @@ async def get_graph_data(
             "relation": edge.relation_type,
             "weight": edge.weight,
             "description": edge.description,
-            "source_context": edge.source_context[:100] if edge.source_context else None
+            "source_context": edge.source_context[:100] if edge.source_context else None,
+            "source_document_id": edge.source_document_id  # 记录关系来源文档
         })
     
+    # 添加文档节点（如果指定了文档）
+    doc_nodes = []
+    if document_id:
+        doc = db.get(Document, document_id)
+        if doc and doc.user_id == current_user.id:
+            doc_nodes.append({
+                "id": f"doc_{doc.id}",
+                "name": doc.title,
+                "type": "DOCUMENT",
+                "group": 7,  # 文档类型
+                "is_document": True,
+                "document_id": doc.id,
+                "content_preview": doc.content[:200] if doc.content else ""
+            })
+    
     return {
-        "nodes": nodes,
+        "nodes": nodes + doc_nodes,
         "links": links,
         "stats": {
             "total_entities": len(entities),
@@ -1037,6 +1187,56 @@ async def get_entity_details(
             "document_count": len(documents),
             "relationship_count": len(outgoing_edges) + len(incoming_edges)
         }
+    }
+
+@app.get("/graph/entity/{entity_id}/documents")
+async def get_entity_documents(
+    entity_id: int,
+    db: Session = Depends(get_secure_db),
+    current_user: User = Depends(get_current_active_user),
+    limit: int = 10,
+    offset: int = 0
+):
+    """获取实体关联的文档列表"""
+    from sqlmodel import select
+    from models import EntityDocumentLink
+    
+    # 检查实体是否存在且属于当前用户
+    entity = db.get(Entity, entity_id)
+    if not entity or entity.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="实体不存在或无权访问")
+    
+    # 获取文档关联
+    doc_links = db.exec(
+        select(EntityDocumentLink)
+        .where(EntityDocumentLink.entity_id == entity_id)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    
+    documents = []
+    for link in doc_links:
+        doc = db.get(Document, link.document_id)
+        if doc and doc.user_id == current_user.id:
+            documents.append({
+                "id": doc.id,
+                "title": doc.title,
+                "content_preview": doc.content[:300] if doc.content else "",
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+                "relevance": link.significance,
+                "frequency_in_doc": link.frequency_in_doc,
+                "occurrences": link.occurrences[:5] if link.occurrences else []  # 前5个出现位置
+            })
+    
+    return {
+        "entity": {
+            "id": entity.id,
+            "name": entity.name,
+            "type": entity.entity_type
+        },
+        "documents": documents,
+        "total": len(doc_links)
     }
 
 @app.post("/graph/query")
