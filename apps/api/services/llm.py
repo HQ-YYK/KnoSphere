@@ -7,6 +7,7 @@ from datetime import datetime
 
 # 导入我们定义的协议
 from .streaming_protocol import AgentMessage, MessageType
+from services.langsmith_integration import trace_function
 
 class LLMService:
     """大语言模型服务类 - 支持思考过程可视化"""
@@ -15,6 +16,7 @@ class LLMService:
         self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("ALIBABA_API_KEY")
         self.model = os.getenv("LLM_MODEL", "deepseek-chat")
     
+    @trace_function(name="LLM-Generation", run_type="llm")
     async def stream_response_with_thinking(
         self, 
         query: str, 

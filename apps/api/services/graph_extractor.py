@@ -14,6 +14,7 @@ import logging
 from models import Entity, GraphEdge, EntityDocumentLink, Document
 from services.llm import get_llm_service
 from core.logger import logger
+from services.langsmith_integration import trace_function
 
 # 预定义的关系类型
 RELATION_TYPES = {
@@ -48,6 +49,8 @@ class GraphExtractor:
         self.db = db_session
         self.llm_service = get_llm_service()
         
+    
+    @trace_function(name="Graph-Extraction", run_type="chain")
     async def extract_from_document(self, document: Document) -> Dict[str, Any]:
         """从单个文档中提取知识图谱"""
         try:

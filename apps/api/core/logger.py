@@ -2,6 +2,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 from loguru import logger
 
 # ==================== 全局 logger 实例 ====================
@@ -76,7 +77,7 @@ class WorkflowLogger:
     """工作流专用日志记录器"""
     
     @staticmethod
-    def node_start(node_name: str, state: dict = None):
+    def node_start(node_name: str, state: Optional[dict] = None):
         """记录节点开始"""
         logger.bind(workflow=node_name).info(
             "🚀 节点开始执行",
@@ -102,7 +103,7 @@ class WorkflowLogger:
         )
     
     @staticmethod
-    def node_error(node_name: str, error: Exception, state: dict = None):
+    def node_error(node_name: str, error: Exception, state: Optional[dict] = None):
         """记录节点错误"""
         logger.bind(workflow=node_name).error(
             f"❌ 节点执行失败: {str(error)}",
@@ -116,7 +117,7 @@ class WorkflowLogger:
         )
     
     @staticmethod
-    def workflow_start(query: str, workflow_id: str = None):
+    def workflow_start(query: str, workflow_id: Optional[str] = None):
         """记录工作流开始"""
         workflow_id = workflow_id or f"wf_{datetime.now().timestamp()}"
         logger.bind(workflow="orchestrator").info(
@@ -145,9 +146,23 @@ class WorkflowLogger:
                 "event": "workflow_complete"
             }
         )
+
+    @staticmethod
+    def workflow_error(workflow_id: str, error: str, total_duration: float = 0):
+        """记录工作流错误"""
+        logger.bind(workflow="orchestrator").error(
+            f"💥 工作流执行失败: {error}",
+            extra={
+                "workflow_id": workflow_id,
+                "error": error,
+                "total_duration_seconds": round(total_duration, 3),
+                "event": "workflow_error"
+            }
+        )
+    
     
     @staticmethod
-    def retrieval_log(query: str, documents: list, strategy: str = None):
+    def retrieval_log(query: str, documents: list, strategy: Optional[str] = None):
         """记录检索日志"""
         logger.bind(workflow="retrieval").debug(
             "🔍 文档检索完成",
@@ -183,7 +198,7 @@ class WorkflowLogger:
 
 # ==================== API 请求日志中间件 ====================
 
-def log_api_request(request_data: dict, endpoint: str, user_agent: str = None):
+def log_api_request(request_data: dict, endpoint: str, user_agent: Optional[str] = None):
     """记录 API 请求"""
     logger.info(
         "📥 API 请求接收",
@@ -201,7 +216,7 @@ def log_api_request(request_data: dict, endpoint: str, user_agent: str = None):
         }
     )
 
-def log_api_response(endpoint: str, status_code: int, response_time: float, error: str = None):
+def log_api_response(endpoint: str, status_code: int, response_time: float, error: Optional[str] = None):
     """记录 API 响应"""
     if error:
         logger.error(

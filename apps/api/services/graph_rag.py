@@ -11,9 +11,10 @@ import networkx as nx
 from collections import defaultdict
 
 from models import Entity, GraphEdge, Document, EntityDocumentLink
-from services.search import hybrid_search
+from services.search import secure_hybrid_search
 from services.llm import get_llm_service
 from core.logger import logger
+from services.langsmith_integration import trace_function
 
 class GraphRAGService:
     """GraphRAG 服务"""
@@ -22,11 +23,12 @@ class GraphRAGService:
         self.db = db
         self.llm_service = get_llm_service()
     
+    @trace_function(name="GraphRAG-Query", run_type="chain")
     async def query(self, query: str, user_id: str, top_k: int = 10) -> Dict[str, Any]:
         """GraphRAG 查询"""
         try:
             # 步骤1: 向量搜索（传统的 RAG）
-            documents = await hybrid_search(query, self.db, user_id=user_id, top_k=top_k)
+            documents = await secure_hybrid_search(query, self.db, user_id=user_id, top_k=top_k)
             
             # 步骤2: 从相关文档中提取关键实体
             key_entities = await self._extract_key_entities_from_docs(query, documents)
@@ -165,13 +167,47 @@ class GraphRAGService:
         
         # 节点
         for entity in entities:
+            # 获取关联的文档信息
+            related_docs = []
+            if hasattr(entity, 'documents') and entity.documents:
+                # 实体直接关联的文档
+                for doc in entity.documents[:3]:  # 只取前3个相关文档
+                    if hasattr(doc, 'id') and hasattr(doc, 'title'):
+                        related_docs.append({
+                            "id": doc.id,
+                            "title": doc.title,
+                            "content_preview": doc.content[:100] if hasattr(doc, 'content') else ""
+                        })
+            else:
+                # 通过实体-文档关联表查询
+                from models import EntityDocumentLink
+                try:
+                    doc_links = self.db.exec(
+                        select(EntityDocumentLink).where(EntityDocumentLink.entity_id == entity.id)
+                    ).all()
+                    
+                    for link in doc_links[:3]:  # 只取前3个
+                        doc = self.db.get(Document, link.document_id)
+                        if doc:
+                            related_docs.append({
+                                "id": doc.id,
+                                "title": doc.title,
+                                "content_preview": doc.content[:100] if doc.content else ""
+                            })
+                except:
+                    pass
+            
             nodes.append({
                 "id": entity.id,
                 "name": entity.name,
                 "type": entity.entity_type,
                 "description": entity.description,
                 "size": entity.frequency,
-                "group": self._get_entity_group(entity.entity_type)
+                "group": self._get_entity_group(entity.entity_type),
+                "documents": related_docs,  # 关联文档信息
+                "primary_doc_id": related_docs[0]["id"] if related_docs else None,
+                "doc_count": len(related_docs),
+                "metadata": entity.metadata or {}
             })
         
         # 边
@@ -181,7 +217,10 @@ class GraphRAGService:
                     "source": edge.source_id,
                     "target": edge.target_id,
                     "relation": edge.relation_type,
-                    "weight": edge.weight
+                    "weight": edge.weight,
+                    "description": edge.description,
+                    "source_document_id": edge.source_document_id,
+                    "context": edge.source_context[:100] if edge.source_context else None
                 })
         
         return {"nodes": nodes, "links": links}

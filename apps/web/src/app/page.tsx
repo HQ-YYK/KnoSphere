@@ -10,6 +10,7 @@ import { BrainCircuit, Database, Cpu, Sparkles, Shield, User } from "lucide-reac
 import { useAuth } from "@/contexts/AuthContext";
 import { KnowledgeGraph } from "@/components/knowledge-graph";
 import { GraphRAGQuery } from "@/components/graph-rag-query";
+import { MonitoringDashboard } from "@/components/monitoring-dashboard";
 
 function HomePage() {
   const { user, logout } = useAuth();
@@ -93,7 +94,7 @@ function HomePage() {
 
           {/* 主要功能区域 */}
           <Tabs defaultValue="chat" className="w-full">
-            <TabsList className="grid w-full md:w-auto grid-cols-4 md:inline-flex bg-zinc-900/50 border border-zinc-800">
+            <TabsList className="grid w-full md:w-auto grid-cols-5 md:inline-flex bg-zinc-900/50 border border-zinc-800">
               <TabsTrigger value="chat" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-emerald-600">
                 智能对话
               </TabsTrigger>
@@ -104,9 +105,14 @@ function HomePage() {
                 知识录入
               </TabsTrigger>
               {user?.permissions?.admin && (
-                <TabsTrigger value="admin" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600 data-[state=active]:to-orange-600">
-                  管理面板
-                </TabsTrigger>
+                <>
+                  <TabsTrigger value="monitoring" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600 data-[state=active]:to-orange-600">
+                    系统监控
+                  </TabsTrigger>
+                  <TabsTrigger value="admin" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-red-600 data-[state=active]:to-rose-600">
+                    管理面板
+                  </TabsTrigger>
+                </>
               )}
             </TabsList>
             
@@ -165,47 +171,19 @@ function HomePage() {
             </TabsContent>
             
             {user?.permissions?.admin && (
-              <TabsContent value="admin" className="space-y-6">
+              <TabsContent value="monitoring" className="space-y-6">
                 <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
                   <CardHeader>
                     <CardTitle className="text-xl flex items-center gap-2">
-                      <Shield className="w-5 h-5 text-amber-400" />
-                      管理员面板
+                      <div className="w-2 h-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 animate-pulse"></div>
+                      系统监控仪表板
                     </CardTitle>
                     <p className="text-zinc-400 text-sm">
-                      系统管理和安全监控
+                      实时监控 AI 系统性能、成本和健康状况
                     </p>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <Card className="bg-zinc-900/30 border-zinc-800">
-                        <CardContent className="p-6">
-                          <div className="text-center space-y-4">
-                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-amber-500/10 mb-4">
-                              <User className="w-8 h-8 text-amber-400" />
-                            </div>
-                            <h3 className="font-medium text-zinc-100">用户管理</h3>
-                            <p className="text-sm text-zinc-400">
-                              管理用户账户和权限
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      
-                      <Card className="bg-zinc-900/30 border-zinc-800">
-                        <CardContent className="p-6">
-                          <div className="text-center space-y-4">
-                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-500/10 mb-4">
-                              <Shield className="w-8 h-8 text-red-400" />
-                            </div>
-                            <h3 className="font-medium text-zinc-100">安全审计</h3>
-                            <p className="text-sm text-zinc-400">
-                              查看系统安全日志
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
+                    <MonitoringDashboard />
                   </CardContent>
                 </Card>
               </TabsContent>

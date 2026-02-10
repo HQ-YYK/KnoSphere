@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { withAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,98 +11,70 @@ import {
   FileText, 
   Calendar, 
   User, 
-  BrainCircuit,
-  Network,
-  Hash,
-  Clock,
-  Eye,
+  Globe, 
+  Network, 
   Download,
-  ExternalLink,
-  Users,
-  Building,
-  Lightbulb,
-  Package,
-  MapPin,
-  Calendar as CalendarIcon
+  Trash2,
+  Eye,
+  EyeOff,
+  Copy
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import AuthService from "@/lib/auth";
+import { format } from "date-fns";
+import { zhCN } from "date-fns/locale";
 
 interface DocumentDetail {
-  document: {
-    id: number;
-    title: string;
-    content: string;
-    created_at: string;
-    updated_at: string;
-    user_id: number;
-    embedding: string;
-    graph_extracted: boolean;
-  };
-  entities: Array<{
+  id: number;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+  user_name?: string;
+  embedding: boolean;
+  graph_extracted: boolean;
+  graph_extraction_time?: string;
+  file_name?: string;
+  file_size?: number;
+  file_type?: string;
+  entities?: Array<{
     id: number;
     name: string;
     type: string;
-    frequency_in_doc: number;
-    significance: number;
-  }>;
-  relations: Array<{
-    id: number;
-    source_id: number;
-    target_id: number;
-    relation: string;
-    description?: string;
-    weight: number;
-  }>;
-  stats: {
-    content_length: number;
-    entity_count: number;
-    relation_count: number;
-    embedding_status: string;
-    graph_extracted: string;
-    graph_extraction_time?: string;
-  };
-  preview_contexts: Array<{
-    entity: string;
-    context: string;
-    position: number;
+    frequency: number;
+    confidence: number;
   }>;
 }
 
-function DocumentDetailPage() {
+export default function DocumentDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
-  
-  const [documentData, setDocumentData] = useState<DocumentDetail | null>(null);
+  const [document, setDocument] = useState<DocumentDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"content" | "entities" | "relations">("content");
-  const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
-  
+  const [showRawContent, setShowRawContent] = useState(false);
+  const [activeTab, setActiveTab] = useState<"content" | "entities" | "info">("content");
+
   const documentId = params.id as string;
 
   useEffect(() => {
-    loadDocument();
+    if (documentId) {
+      loadDocument();
+    }
   }, [documentId]);
 
   const loadDocument = async () => {
     setIsLoading(true);
     try {
-      const response = await AuthService.secureFetch(
-        `http://localhost:8000/documents/${documentId}`
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
+      const response = await AuthService.secureFetch(`http://localhost:8000/documents/${documentId}`);
       const data = await response.json();
-      setDocumentData(data);
+      setDocument(data);
     } catch (error: any) {
       console.error("加载文档失败:", error);
       toast({
         title: "加载失败",
-        description: error.message,
+        description: error.message || "无法加载文档详情",
         variant: "destructive"
       });
     } finally {
@@ -111,482 +82,360 @@ function DocumentDetailPage() {
     }
   };
 
-  const entityIcons: Record<string, React.ReactNode> = {
-    "PERSON": <Users className="w-4 h-4" />,
-    "ORGANIZATION": <Building className="w-4 h-4" />,
-    "CONCEPT": <Lightbulb className="w-4 h-4" />,
-    "PRODUCT": <Package className="w-4 h-4" />,
-    "LOCATION": <MapPin className="w-4 h-4" />,
-    "EVENT": <CalendarIcon className="w-4 h-4" />
+  const formatDate = (dateString: string) => {
+    try {
+      return format(new Date(dateString), "yyyy年MM月dd日 HH:mm", { locale: zhCN });
+    } catch {
+      return dateString;
+    }
   };
 
-  const entityColors: Record<string, string> = {
-    "PERSON": "text-blue-400 bg-blue-500/10",
-    "ORGANIZATION": "text-emerald-400 bg-emerald-500/10",
-    "CONCEPT": "text-purple-400 bg-purple-500/10",
-    "PRODUCT": "text-amber-400 bg-amber-500/10",
-    "LOCATION": "text-red-400 bg-red-500/10",
-    "EVENT": "text-pink-400 bg-pink-500/10"
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return "未知";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({
+      title: "已复制",
+      description: "内容已复制到剪贴板",
+    });
+  };
+
+  const deleteDocument = async () => {
+    if (!confirm("确定要删除这个文档吗？此操作不可撤销。")) return;
+
+    try {
+      const response = await AuthService.secureFetch(`http://localhost:8000/documents/${documentId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        toast({
+          title: "删除成功",
+          description: "文档已成功删除",
+        });
+        router.push("/");
+      } else {
+        throw new Error("删除失败");
+      }
+    } catch (error: any) {
+      toast({
+        title: "删除失败",
+        description: error.message || "无法删除文档",
+        variant: "destructive"
+      });
+    }
   };
 
   const navigateToGraph = () => {
-    router.push(`/graph?document=${documentId}`);
-  };
-
-  const navigateToEntity = (entityId: number) => {
-    router.push(`/graph?entity=${entityId}`);
+    if (document?.graph_extracted) {
+      router.push(`/graph?document=${documentId}`);
+    } else {
+      toast({
+        title: "提示",
+        description: "该文档尚未提取知识图谱",
+        variant: "default"
+      });
+    }
   };
 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-50 p-8">
-        <Card className="bg-zinc-900/50 border-zinc-800">
-          <CardContent className="h-[400px] flex items-center justify-center">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-center h-64">
             <div className="text-center">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 mb-4 animate-pulse">
-                <FileText className="w-6 h-6 text-white" />
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 mb-4">
+                <FileText className="w-6 h-6 text-white animate-pulse" />
               </div>
-              <p className="text-zinc-400">加载文档详情中...</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!documentData) {
-    return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-50 p-8">
-        <Card className="bg-zinc-900/50 border-zinc-800">
-          <CardContent className="h-[400px] flex items-center justify-center">
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-orange-500 mb-4">
-                <FileText className="w-6 h-6 text-white" />
-              </div>
-              <p className="text-zinc-400">文档不存在或无权访问</p>
-              <Button 
-                onClick={() => router.push("/")}
-                className="mt-4 bg-zinc-800 hover:bg-zinc-700"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回首页
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  const { document: doc, entities, relations, stats, preview_contexts } = documentData;
-
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-50">
-      {/* 头部 */}
-      <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Button
-                onClick={() => router.push("/")}
-                variant="ghost"
-                size="sm"
-                className="text-zinc-400 hover:text-zinc-300"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回
-              </Button>
-              <div>
-                <h1 className="text-lg font-semibold text-zinc-100 line-clamp-1">
-                  {doc.title}
-                </h1>
-                <p className="text-xs text-zinc-500">文档详情</p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={navigateToGraph}
-                variant="outline"
-                size="sm"
-                className="border-zinc-700 hover:bg-zinc-800"
-              >
-                <Network className="w-4 h-4 mr-2" />
-                查看知识图谱
-              </Button>
+              <p className="text-zinc-400">加载文档中...</p>
             </div>
           </div>
         </div>
-      </header>
+      </div>
+    );
+  }
 
-      {/* 主要内容 */}
-      <div className="max-w-7xl mx-auto p-4 md:p-8">
-        <div className="space-y-6">
-          {/* 文档统计卡片 */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-400">文档大小</p>
-                    <p className="text-xl font-bold text-white">
-                      {(stats.content_length / 1024).toFixed(1)} KB
-                    </p>
+  if (!document) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-50 p-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-12">
+            <FileText className="w-16 h-16 text-zinc-700 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold text-zinc-300 mb-2">文档不存在</h2>
+            <p className="text-zinc-500 mb-6">请求的文档可能已被删除或您没有访问权限</p>
+            <Button
+              onClick={() => router.push("/")}
+              className="bg-gradient-to-r from-blue-600 to-purple-600"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              返回首页
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-50 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        {/* 返回按钮 */}
+        <div className="mb-6">
+          <Button
+            variant="ghost"
+            onClick={() => router.back()}
+            className="text-zinc-400 hover:text-zinc-300"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            返回
+          </Button>
+        </div>
+
+        {/* 文档头部 */}
+        <Card className="bg-zinc-900/50 border-zinc-800 mb-6">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-bold text-zinc-100 mb-2">{document.title}</h1>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-500">
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>创建: {formatDate(document.created_at)}</span>
                   </div>
-                  <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-                    <FileText className="w-5 h-5 text-blue-400" />
+                  {document.updated_at && document.updated_at !== document.created_at && (
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      <span>更新: {formatDate(document.updated_at)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <User className="w-3 h-3" />
+                    <span>{document.user_name || `用户 ${document.user_id}`}</span>
                   </div>
+                  {document.file_name && (
+                    <div className="flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      <span>{document.file_name}</span>
+                    </div>
+                  )}
                 </div>
-              </CardContent>
-            </Card>
-            
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-400">实体数量</p>
-                    <p className="text-xl font-bold text-emerald-400">
-                      {stats.entity_count}
-                    </p>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {document.graph_extracted && (
+                  <Badge 
+                    variant="outline" 
+                    className="border-emerald-500/30 text-emerald-300 cursor-pointer hover:bg-emerald-500/10"
+                    onClick={navigateToGraph}
+                  >
+                    <Globe className="w-3 h-3 mr-1" />
+                    已提取图谱
+                  </Badge>
+                )}
+                {document.embedding && (
+                  <Badge variant="outline" className="border-blue-500/30 text-blue-300">
+                    <Network className="w-3 h-3 mr-1" />
+                    已向量化
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="flex flex-wrap gap-2 pt-4 border-t border-zinc-800">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => copyToClipboard(document.content)}
+                className="border-zinc-700 hover:bg-zinc-800"
+              >
+                <Copy className="w-3 h-3 mr-2" />
+                复制内容
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowRawContent(!showRawContent)}
+                className="border-zinc-700 hover:bg-zinc-800"
+              >
+                {showRawContent ? (
+                  <>
+                    <EyeOff className="w-3 h-3 mr-2" />
+                    隐藏原始格式
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3 h-3 mr-2" />
+                    显示原始格式
+                  </>
+                )}
+              </Button>
+              {document.file_name && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // 下载文件逻辑
+                    toast({
+                      title: "开发中",
+                      description: "文件下载功能即将上线",
+                    });
+                  }}
+                  className="border-zinc-700 hover:bg-zinc-800"
+                >
+                  <Download className="w-3 h-3 mr-2" />
+                  下载原文件
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={deleteDocument}
+                className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+              >
+                <Trash2 className="w-3 h-3 mr-2" />
+                删除文档
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左侧：内容区域 */}
+          <div className="lg:col-span-2">
+            <Card className="bg-zinc-900/50 border-zinc-800 h-full">
+              <CardHeader>
+                <CardTitle className="text-lg">文档内容</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[calc(100vh-300px)]">
+                  <div className={`prose prose-invert max-w-none p-4 ${showRawContent ? 'whitespace-pre-wrap' : ''}`}>
+                    {document.content}
                   </div>
-                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                    <BrainCircuit className="w-5 h-5 text-emerald-400" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-400">关系数量</p>
-                    <p className="text-xl font-bold text-purple-400">
-                      {stats.relation_count}
-                    </p>
-                  </div>
-                  <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
-                    <Network className="w-5 h-5 text-purple-400" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-zinc-400">知识图谱</p>
-                    <p className="text-xl font-bold text-amber-400">
-                      {stats.graph_extracted}
-                    </p>
-                  </div>
-                  <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
-                    <Hash className="w-5 h-5 text-amber-400" />
-                  </div>
-                </div>
+                </ScrollArea>
               </CardContent>
             </Card>
           </div>
 
-          {/* 元数据 */}
-          <Card className="bg-zinc-900/50 border-zinc-800">
-            <CardContent className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-zinc-400">
-                    <Calendar className="w-4 h-4" />
-                    创建时间
+          {/* 右侧：信息和实体 */}
+          <div className="space-y-6">
+            {/* 文档信息 */}
+            <Card className="bg-zinc-900/50 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-blue-400" />
+                  文档信息
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">ID</span>
+                    <code className="text-zinc-300 font-mono">{document.id}</code>
                   </div>
-                  <p className="text-zinc-200">
-                    {new Date(doc.created_at).toLocaleString("zh-CN")}
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-zinc-400">
-                    <Clock className="w-4 h-4" />
-                    更新时间
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">字符数</span>
+                    <span className="text-zinc-300">{document.content.length}</span>
                   </div>
-                  <p className="text-zinc-200">
-                    {new Date(doc.updated_at).toLocaleString("zh-CN")}
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-zinc-400">
-                    <User className="w-4 h-4" />
-                    所属用户
-                  </div>
-                  <p className="text-zinc-200">ID: {doc.user_id}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 标签页 */}
-          <Card className="bg-zinc-900/50 border-zinc-800">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>文档内容分析</CardTitle>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant={activeTab === "content" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setActiveTab("content")}
-                    className={activeTab === "content" 
-                      ? "bg-blue-600 hover:bg-blue-700" 
-                      : "bg-zinc-800 hover:bg-zinc-700"
-                    }
-                  >
-                    <FileText className="w-4 h-4 mr-2" />
-                    内容
-                  </Button>
-                  <Button
-                    variant={activeTab === "entities" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setActiveTab("entities")}
-                    className={activeTab === "entities" 
-                      ? "bg-emerald-600 hover:bg-emerald-700" 
-                      : "bg-zinc-800 hover:bg-zinc-700"
-                    }
-                  >
-                    <BrainCircuit className="w-4 h-4 mr-2" />
-                    实体 ({entities.length})
-                  </Button>
-                  <Button
-                    variant={activeTab === "relations" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setActiveTab("relations")}
-                    className={activeTab === "relations" 
-                      ? "bg-purple-600 hover:bg-purple-700" 
-                      : "bg-zinc-800 hover:bg-zinc-700"
-                    }
-                  >
-                    <Network className="w-4 h-4 mr-2" />
-                    关系 ({relations.length})
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {activeTab === "content" && (
-                <div className="space-y-6">
-                  {/* 文档内容 */}
-                  <ScrollArea className="h-[500px] rounded-lg bg-zinc-900/30 p-6 border border-zinc-800">
-                    <div className="prose prose-invert max-w-none">
-                      <div className="whitespace-pre-wrap text-zinc-300 leading-relaxed">
-                        {doc.content}
-                      </div>
+                  {document.file_size && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-400">文件大小</span>
+                      <span className="text-zinc-300">{formatFileSize(document.file_size)}</span>
                     </div>
-                  </ScrollArea>
-                  
-                  {/* 实体上下文 */}
-                  {preview_contexts.length > 0 && (
-                    <div>
-                      <h3 className="text-lg font-semibold text-zinc-100 mb-4">
-                        实体出现位置
-                      </h3>
-                      <div className="space-y-3">
-                        {preview_contexts.map((context, idx) => (
-                          <Card key={idx} className="bg-zinc-900/30 border-zinc-800">
-                            <CardContent className="p-4">
-                              <div className="flex items-start gap-3">
-                                <Badge 
-                                  variant="outline" 
-                                  className="border-transparent bg-blue-500/10 text-blue-300"
-                                >
-                                  {context.entity}
-                                </Badge>
-                                <div className="flex-1">
-                                  <div 
-                                    className="text-sm text-zinc-400"
-                                    dangerouslySetInnerHTML={{ 
-                                      __html: context.context.replace(/\*\*(.*?)\*\*/g, '<span class="text-blue-400 font-semibold">$1</span>')
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
+                  )}
+                  {document.file_type && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-400">文件类型</span>
+                      <Badge variant="outline" className="text-xs border-transparent bg-zinc-800">
+                        {document.file_type}
+                      </Badge>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">向量化</span>
+                    <Badge 
+                      variant="outline" 
+                      className={`text-xs border-transparent ${document.embedding ? 'bg-emerald-500/10 text-emerald-300' : 'bg-zinc-800 text-zinc-400'}`}
+                    >
+                      {document.embedding ? '已完成' : '未处理'}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">知识图谱</span>
+                    <Badge 
+                      variant="outline" 
+                      className={`text-xs border-transparent ${document.graph_extracted ? 'bg-purple-500/10 text-purple-300' : 'bg-zinc-800 text-zinc-400'}`}
+                      onClick={navigateToGraph}
+                    >
+                      {document.graph_extracted ? '已提取' : '未提取'}
+                    </Badge>
+                  </div>
+                  {document.graph_extraction_time && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-400">图谱提取时间</span>
+                      <span className="text-zinc-300 text-sm">
+                        {formatDate(document.graph_extraction_time)}
+                      </span>
                     </div>
                   )}
                 </div>
-              )}
-              
-              {activeTab === "entities" && (
-                <div>
-                  <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {entities.map((entity) => (
-                      <Card 
-                        key={entity.id}
-                        className={`bg-zinc-900/30 border-zinc-800 hover:bg-zinc-900/50 transition-colors cursor-pointer ${
-                          selectedEntity === entity.name ? "ring-2 ring-blue-500" : ""
-                        }`}
-                        onClick={() => {
-                          setSelectedEntity(entity.name === selectedEntity ? null : entity.name);
-                          navigateToEntity(entity.id);
-                        }}
-                      >
-                        <CardContent className="p-4">
-                          <div className="flex items-start gap-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                              entityColors[entity.type]?.split(" ")[1] || "bg-zinc-800"
-                            }`}>
-                              {entityIcons[entity.type] || <BrainCircuit className="w-5 h-5" />}
+              </CardContent>
+            </Card>
+
+            {/* 实体列表 */}
+            <Card className="bg-zinc-900/50 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-purple-400" />
+                  提取的实体 ({document.entities?.length || 0})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {document.entities && document.entities.length > 0 ? (
+                  <ScrollArea className="h-64">
+                    <div className="space-y-2">
+                      {document.entities.map((entity) => (
+                        <div
+                          key={entity.id}
+                          className="flex items-center justify-between p-3 bg-zinc-800/30 rounded-lg hover:bg-zinc-800/50 transition-colors cursor-pointer"
+                          onClick={() => router.push(`/graph?entity=${entity.id}`)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center">
+                              <Globe className="w-4 h-4 text-purple-400" />
                             </div>
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between">
-                                <h4 className="font-medium text-zinc-100">{entity.name}</h4>
-                                <Badge 
-                                  variant="outline" 
-                                  className={`text-xs border-transparent ${
-                                    entityColors[entity.type]?.split(" ")[0] || "text-zinc-400"
-                                  } ${
-                                    entityColors[entity.type]?.split(" ")[1] || "bg-zinc-800/50"
-                                  }`}
-                                >
+                            <div>
+                              <div className="font-medium text-zinc-100">{entity.name}</div>
+                              <div className="text-xs text-zinc-400 mt-1 flex items-center gap-2">
+                                <Badge variant="outline" className="text-xs border-transparent bg-zinc-700">
                                   {entity.type}
                                 </Badge>
-                              </div>
-                              <div className="mt-2 flex items-center justify-between text-sm">
-                                <div className="flex items-center gap-4">
-                                  <span className="text-zinc-500">
-                                    出现: {entity.frequency_in_doc} 次
-                                  </span>
-                                  <span className="text-zinc-500">
-                                    相关度: {(entity.significance * 100).toFixed(0)}%
-                                  </span>
-                                </div>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 px-2 text-zinc-500 hover:text-zinc-300"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigateToEntity(entity.id);
-                                  }}
-                                >
-                                  <ExternalLink className="w-3 h-3" />
-                                </Button>
+                                <span>出现 {entity.frequency} 次</span>
                               </div>
                             </div>
                           </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                          <ChevronRight className="w-4 h-4 text-zinc-600" />
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center py-8 text-zinc-500">
+                    <Globe className="w-12 h-12 mx-auto mb-4 text-zinc-700" />
+                    <p>该文档暂无提取的实体</p>
+                    <p className="text-sm mt-2">上传文档后会自动提取实体和关系</p>
                   </div>
-                  
-                  {selectedEntity && (
-                    <div className="mt-6">
-                      <Card className="bg-zinc-900/30 border-zinc-800">
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between mb-4">
-                            <h4 className="font-medium text-zinc-100">
-                              选中实体: {selectedEntity}
-                            </h4>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => navigateToEntity(
-                                entities.find(e => e.name === selectedEntity)?.id || 0
-                              )}
-                              className="border-zinc-700 hover:bg-zinc-800"
-                            >
-                              查看知识图谱
-                            </Button>
-                          </div>
-                          <p className="text-sm text-zinc-400">
-                            该实体在此文档中出现 {entities.find(e => e.name === selectedEntity)?.frequency_in_doc} 次，
-                            相关度为 {(entities.find(e => e.name === selectedEntity)?.significance || 0) * 100}%。
-                            点击上方按钮可在知识图谱中查看该实体的详细信息。
-                          </p>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              {activeTab === "relations" && (
-                <div>
-                  {relations.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Network className="w-12 h-12 text-zinc-700 mx-auto mb-4" />
-                      <p className="text-zinc-500">此文档尚未提取出关系</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {relations.map((relation) => {
-                        const sourceEntity = entities.find(e => e.id === relation.source_id);
-                        const targetEntity = entities.find(e => e.id === relation.target_id);
-                        
-                        return (
-                          <Card key={relation.id} className="bg-zinc-900/30 border-zinc-800">
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <Badge 
-                                    variant="outline" 
-                                    className={`border-transparent ${
-                                      entityColors[sourceEntity?.type || ""]?.split(" ")[1] || "bg-zinc-800/50"
-                                    }`}
-                                  >
-                                    {sourceEntity?.name || `ID: ${relation.source_id}`}
-                                  </Badge>
-                                  <span className="text-zinc-500 mx-2">→</span>
-                                  <Badge 
-                                    variant="outline" 
-                                    className={`border-transparent ${
-                                      entityColors[targetEntity?.type || ""]?.split(" ")[1] || "bg-zinc-800/50"
-                                    }`}
-                                  >
-                                    {targetEntity?.name || `ID: ${relation.target_id}`}
-                                  </Badge>
-                                </div>
-                                <Badge 
-                                  variant="outline" 
-                                  className="border-purple-500/30 text-purple-300 bg-purple-500/10"
-                                >
-                                  {relation.relation}
-                                </Badge>
-                              </div>
-                              
-                              {relation.description && (
-                                <p className="text-sm text-zinc-400 mt-2">
-                                  {relation.description}
-                                </p>
-                              )}
-                              
-                              <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-                                <span>权重: {relation.weight.toFixed(2)}</span>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 px-2"
-                                  onClick={() => navigateToGraph()}
-                                >
-                                  在图中查看
-                                </Button>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-export default withAuth(DocumentDetailPage, [
-  { resource: "documents", action: "read" }
-]);

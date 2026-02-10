@@ -21,7 +21,7 @@ from tasks.celery_app import celery_app
 
 from core.logger import logger, log_api_response
 from database import get_db, init_db, engine
-from models import Document, User
+from models import Document, Entity, GraphEdge, User
 
 from services.agentic_chat import get_agentic_chat_service
 from services.tools import get_tool_manager
@@ -583,6 +583,33 @@ async def get_document_detail(
         "preview_contexts": _extract_entity_contexts(document.content, entities[:5])  # 提取实体出现的上下文
     }
 
+@app.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: int,
+    db: Session = Depends(get_secure_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """删除文档"""
+    document = db.get(Document, document_id)
+    
+    if not document or document.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="文档不存在或无权访问")
+    
+    # 删除文档关联的实体-文档链接
+    from models import EntityDocumentLink
+    links = db.exec(
+        select(EntityDocumentLink).where(EntityDocumentLink.document_id == document_id)
+    ).all()
+    
+    for link in links:
+        db.delete(link)
+    
+    # 删除文档
+    db.delete(document)
+    db.commit()
+    
+    return {"message": "文档删除成功"}
+
 def _extract_entity_contexts(content: str, entities: list, context_size: int = 200) -> list:
     """提取实体在文档中出现的上下文"""
     if not content or not entities:
@@ -783,7 +810,7 @@ async def agent_execute(
             docs = await secure_hybrid_search(
                 query=query,
                 db=db,
-                user_id=current_user.id,
+                user_id=str(current_user.id),
                 top_k=5,
                 final_k=2
             )
@@ -814,7 +841,10 @@ async def agent_execute(
                 }
                 
                 # 执行工作流
-                async for event in app.astream(initial_state, {"db": db}):
+                async for event in app.astream(initial_state, {
+                    "db": db,
+                    "user_id": str(current_user.id)
+                }):
                     for key, value in event.items():
                         if key == "generation" and value:
                             yield f"data: {json.dumps({'type': 'chunk', 'data': value})}\n\n"
@@ -982,10 +1012,9 @@ async def get_edges(
 async def get_graph_data(
     db: Session = Depends(get_secure_db),
     current_user: User = Depends(get_current_active_user),
-    document_id: Optional[int] = None,
-    include_documents: bool = True  # 新增参数：是否包含文档信息
+    document_id: Optional[int] = None
 ):
-    """获取图谱数据（用于可视化）"""
+    """获取图谱数据（用于可视化）- 增强版，包含文档信息"""
     from sqlmodel import select
     
     # 获取实体
@@ -1000,12 +1029,12 @@ async def get_graph_data(
         # 获取所有实体（按频率排序）
         stmt = select(Entity).where(
             Entity.user_id == current_user.id
-        ).order_by(Entity.frequency.desc()).limit(100)  # 增加到100个
+        ).order_by(Entity.frequency.desc()).limit(50)
     
     entities = db.exec(stmt).all()
     
     if not entities:
-        return {"nodes": [], "links": []}
+        return {"nodes": [], "links": [], "stats": {}}
     
     entity_ids = [e.id for e in entities]
     
@@ -1017,39 +1046,29 @@ async def get_graph_data(
                 GraphEdge.target_id.in_(entity_ids)
             ),
             GraphEdge.user_id == current_user.id
-        ).limit(300)
+        ).limit(200)
     ).all()
     
-    # 如果要求包含文档信息，获取实体的关联文档
-    entity_docs_map = {}
-    if include_documents:
-        from models import EntityDocumentLink
-        # 查询所有实体的文档关联
-        doc_links = db.exec(
-            select(EntityDocumentLink).where(
-                EntityDocumentLink.entity_id.in_(entity_ids)
-            )
-        ).all()
-        
-        # 构建实体到文档的映射
-        for link in doc_links:
-            if link.entity_id not in entity_docs_map:
-                entity_docs_map[link.entity_id] = []
-            
-            # 获取文档详情
-            doc = db.get(Document, link.document_id)
-            if doc and doc.user_id == current_user.id:  # 确保文档属于当前用户
-                entity_docs_map[link.entity_id].append({
-                    "id": doc.id,
-                    "title": doc.title,
-                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
-                    "relevance": link.significance  # 关联程度
-                })
-    
-    # 构建节点数据
+    # 构建节点数据（包含文档信息）
     nodes = []
     for entity in entities:
-        node_data = {
+        # 查询实体关联的文档
+        doc_links = db.exec(
+            select(EntityDocumentLink).where(EntityDocumentLink.entity_id == entity.id)
+        ).all()
+        
+        related_docs = []
+        for link in doc_links[:3]:  # 只取前3个相关文档
+            doc = db.get(Document, link.document_id)
+            if doc and doc.user_id == current_user.id:  # 确保文档属于当前用户
+                related_docs.append({
+                    "id": doc.id,
+                    "title": doc.title,
+                    "content_preview": doc.content[:100] if doc.content else "",
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None
+                })
+        
+        nodes.append({
             "id": entity.id,
             "name": entity.name,
             "type": entity.entity_type,
@@ -1057,20 +1076,10 @@ async def get_graph_data(
             "group": _get_entity_group(entity.entity_type),
             "frequency": entity.frequency,
             "confidence": entity.confidence,
-            "document_count": len(entity.documents) if hasattr(entity, 'documents') else 0
-        }
-        
-        # 添加文档信息
-        if include_documents and entity.id in entity_docs_map:
-            docs = entity_docs_map[entity.id]
-            node_data["documents"] = docs
-            # 按关联程度排序，取最相关的文档
-            if docs:
-                sorted_docs = sorted(docs, key=lambda x: x.get("relevance", 0), reverse=True)
-                node_data["primary_doc_id"] = sorted_docs[0]["id"]
-                node_data["primary_doc_title"] = sorted_docs[0]["title"]
-        
-        nodes.append(node_data)
+            "documents": related_docs,  # 关联文档信息
+            "primary_doc_id": related_docs[0]["id"] if related_docs else None,
+            "doc_count": len(related_docs)
+        })
     
     # 构建边数据
     links = []
@@ -1081,32 +1090,23 @@ async def get_graph_data(
             "relation": edge.relation_type,
             "weight": edge.weight,
             "description": edge.description,
-            "source_context": edge.source_context[:100] if edge.source_context else None,
-            "source_document_id": edge.source_document_id  # 记录关系来源文档
+            "source_document_id": edge.source_document_id,
+            "context": edge.source_context[:100] if edge.source_context else None
         })
     
-    # 添加文档节点（如果指定了文档）
-    doc_nodes = []
-    if document_id:
-        doc = db.get(Document, document_id)
-        if doc and doc.user_id == current_user.id:
-            doc_nodes.append({
-                "id": f"doc_{doc.id}",
-                "name": doc.title,
-                "type": "DOCUMENT",
-                "group": 7,  # 文档类型
-                "is_document": True,
-                "document_id": doc.id,
-                "content_preview": doc.content[:200] if doc.content else ""
-            })
+    # 统计信息
+    entity_types = {}
+    for entity in entities:
+        entity_types[entity.entity_type] = entity_types.get(entity.entity_type, 0) + 1
     
     return {
-        "nodes": nodes + doc_nodes,
+        "nodes": nodes,
         "links": links,
         "stats": {
             "total_entities": len(entities),
             "total_edges": len(edges),
-            "entity_types": _count_entity_types(entities)
+            "entity_types": entity_types,
+            "docs_with_entities": len(set([node["primary_doc_id"] for node in nodes if node["primary_doc_id"]]))
         }
     }
 
@@ -1412,6 +1412,118 @@ async def cleanup_graph(
         "message": f"知识图谱清理任务已开始 ({cleanup_type})",
         "task_id": task.id,
         "status_url": f"/task/status/{task.id}"
+    }
+
+
+# ==================== 监控相关端点 ====================
+@app.get("/monitoring/performance")
+async def get_performance_metrics(
+    hours: int = 24,
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取性能指标"""
+    from services.langsmith_integration import get_langsmith_monitor
+    
+    if not current_user.permissions.get("admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    
+    monitor = get_langsmith_monitor()
+    report = monitor.get_performance_report(hours)
+    
+    return report
+
+@app.get("/monitoring/cost")
+async def get_cost_metrics(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取成本指标"""
+    from services.langsmith_integration import get_langsmith_monitor
+    from datetime import datetime
+    
+    if not current_user.permissions.get("admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    
+    monitor = get_langsmith_monitor()
+    
+    # 解析日期参数
+    start_dt = None
+    end_dt = None
+    
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        except:
+            raise HTTPException(status_code=400, detail="无效的开始日期格式")
+    
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except:
+            raise HTTPException(status_code=400, detail="无效的结束日期格式")
+    
+    report = monitor.get_cost_report(start_dt, end_dt)
+    
+    return report
+
+@app.get("/monitoring/health")
+async def get_health_status(
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取系统健康状态"""
+    from services.langsmith_integration import get_langsmith_monitor
+    
+    monitor = get_langsmith_monitor()
+    health = monitor.performance_monitor.check_health()
+    
+    return health
+
+@app.post("/monitoring/feedback")
+async def submit_feedback(
+    feedback: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    """提交用户反馈"""
+    from services.langsmith_integration import get_langsmith_monitor
+    
+    # 添加用户信息到反馈数据
+    feedback["user_id"] = current_user.id
+    
+    monitor = get_langsmith_monitor()
+    success = monitor.feedback_collector.collect_feedback(feedback)
+    
+    if success:
+        return {"message": "反馈已提交"}
+    else:
+        raise HTTPException(status_code=500, detail="提交反馈失败")
+
+@app.get("/monitoring/langsmith")
+async def get_langsmith_link(
+    run_id: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取 LangSmith 追踪链接"""
+    from services.langsmith_integration import get_langsmith_monitor
+    
+    monitor = get_langsmith_monitor()
+    
+    if not monitor.is_enabled():
+        raise HTTPException(status_code=400, detail="LangSmith 未启用")
+    
+    project_name = os.getenv("LANGCHAIN_PROJECT", "KnoSphere-Production-2026")
+    
+    if run_id:
+        # 特定运行的链接
+        link = f"https://smith.langchain.com/o/{os.getenv('LANGCHAIN_ENDPOINT', '').split('/')[-1]}/projects/p/{project_name}/r/{run_id}"
+    else:
+        # 项目概览链接
+        link = f"https://smith.langchain.com/o/{os.getenv('LANGCHAIN_ENDPOINT', '').split('/')[-1]}/projects/p/{project_name}"
+    
+    return {
+        "project": project_name,
+        "run_id": run_id,
+        "url": link
     }
 
 # ==================== 保留原有接口 ====================

@@ -6,12 +6,12 @@ from services.tools import get_tool_manager
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import asyncio
-from services.search import hybrid_search
+from services.search import secure_hybrid_search
 from services.llm import get_llm_service
 from sqlmodel import Session
 from datetime import datetime
 import json
+from core.auth import get_current_user
 
 # ==================== 状态定义 ====================
 
@@ -90,6 +90,8 @@ async def retrieve_node(state: AgentState, config: dict) -> dict:
         if not db:
             raise ValueError("数据库会话未提供")
         
+        user_id = config.get("user_id", "")
+        
         # 获取最后一条用户消息
         messages = state.get("messages", [])
         if not messages:
@@ -105,7 +107,8 @@ async def retrieve_node(state: AgentState, config: dict) -> dict:
         
         # 执行混合检索
         print(f"🔍 执行智能检索: {query[:50]}...")
-        documents = await hybrid_search(query, db, top_k=top_k, final_k=final_k)
+        
+        documents = await secure_hybrid_search(query, db, user_id, top_k=top_k, final_k=final_k)
         
         return {
             "documents": documents,

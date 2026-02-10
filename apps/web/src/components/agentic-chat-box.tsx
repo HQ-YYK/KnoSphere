@@ -15,7 +15,12 @@ import {
   Zap,
   Clock,
   Sparkles,
-  Settings
+  Settings,
+  ThumbsUp,
+  ThumbsDown,
+  MessageSquare,
+  CheckCircle,
+  Wrench
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ThinkingProcess } from "./thinking-process";
@@ -47,6 +52,16 @@ interface ThinkingStep {
   metadata?: Record<string, any>;
 }
 
+// 反馈数据结构
+interface FeedbackData {
+  run_id?: string;
+  score: number;  // 0-1
+  comment?: string;
+  type: "thumbs_up" | "thumbs_down" | "rating";
+  user_id?: number;
+}
+
+
 export function AgenticChatBox() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -60,12 +75,46 @@ export function AgenticChatBox() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [chatMode, setChatMode] = useState<"full" | "simple" | "agentic">("agentic");
-  const [toolExecutions, setToolExecutions] = useState<any[]>([]);
-  const [activeTools, setActiveTools] = useState<string[]>([]);
   const [activeThinking, setActiveThinking] = useState<ThinkingStep[]>([]);
   const [currentWorkflowId, setCurrentWorkflowId] = useState<string | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const [feedbackScores, setFeedbackScores] = useState<Record<string, number>>({});
+  const [feedbackComments, setFeedbackComments] = useState<Record<string, string>>({});
+  const [showFeedbackForm, setShowFeedbackForm] = useState<string | null>(null);
+
+  // 发送反馈
+  const sendFeedback = async (messageId: string, score: number, comment?: string) => {
+    try {
+      const response = await fetch("http://localhost:8000/monitoring/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+        },
+        body: JSON.stringify({
+          run_id: messageId,  // 假设 messageId 就是 run_id
+          score: score,
+          comment: comment,
+          type: score >= 0.7 ? "thumbs_up" : "thumbs_down",
+          user_id: user?.id
+        })
+      });
+
+      if (response.ok) {
+        toast({
+          title: "感谢反馈！",
+          description: "您的反馈将帮助我们改进系统。"
+        });
+        
+        // 更新本地状态
+        setFeedbackScores(prev => ({ ...prev, [messageId]: score }));
+        setShowFeedbackForm(null);
+      }
+    } catch (error) {
+      console.error("发送反馈失败:", error);
+    }
+  };
 
   // 自动滚动到底部
   useEffect(() => {
@@ -295,6 +344,82 @@ export function AgenticChatBox() {
   // 获取当前正在思考的消息
   const currentThinkingMessage = messages.find(msg => msg.isThinking);
 
+  // 在消息组件中添加反馈 UI
+  const renderFeedbackUI = (message: Message) => {
+    const currentScore = feedbackScores[message.id] || 0;
+    const currentComment = feedbackComments[message.id] || "";
+    
+    return (
+      <div className="mt-3 pt-3 border-t border-zinc-700/50">
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-zinc-500">这个回答有帮助吗？</div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => sendFeedback(message.id, 1.0)}
+              className={`p-1 rounded-full ${
+                currentScore === 1.0 
+                  ? "bg-emerald-500/20 text-emerald-400" 
+                  : "hover:bg-zinc-800 text-zinc-500"
+              }`}
+              title="有帮助"
+            >
+              <ThumbsUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => sendFeedback(message.id, 0.0)}
+              className={`p-1 rounded-full ${
+                currentScore === 0.0 
+                  ? "bg-red-500/20 text-red-400" 
+                  : "hover:bg-zinc-800 text-zinc-500"
+              }`}
+              title="没有帮助"
+            >
+              <ThumbsDown className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowFeedbackForm(showFeedbackForm === message.id ? null : message.id)}
+              className="p-1 rounded-full hover:bg-zinc-800 text-zinc-500"
+              title="详细反馈"
+            >
+              <MessageSquare className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        
+        {/* 详细反馈表单 */}
+        {showFeedbackForm === message.id && (
+          <div className="mt-3 p-3 bg-zinc-800/50 rounded-lg">
+            <textarea
+              value={currentComment}
+              onChange={(e) => setFeedbackComments(prev => ({ ...prev, [message.id]: e.target.value }))}
+              placeholder="请告诉我们这个回答有什么问题或如何改进..."
+              className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-sm text-zinc-300 mb-2"
+              rows={2}
+            />
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-zinc-500">您的反馈将被用于改进 AI 模型</div>
+              <Button
+                size="sm"
+                onClick={() => sendFeedback(message.id, currentScore, currentComment)}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+              >
+                提交反馈
+              </Button>
+            </div>
+          </div>
+        )}
+        
+        {/* 显示已提交的反馈 */}
+        {currentScore > 0 && (
+          <div className="mt-2 text-xs text-emerald-400 flex items-center gap-1">
+            <CheckCircle className="w-3 h-3" />
+            已感谢您的反馈
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* 聊天头部 */}
@@ -430,6 +555,10 @@ export function AgenticChatBox() {
                         </div>
                       )}
                     </div>
+
+
+                    {/* 仅对 AI 消息显示反馈 */}
+                    {message.role === "assistant" && renderFeedbackUI(message)}
                   </div>
                 ))}
                 

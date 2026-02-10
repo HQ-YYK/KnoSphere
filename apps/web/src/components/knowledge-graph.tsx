@@ -20,17 +20,12 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import AuthService from "@/lib/auth";
 import dynamic from "next/dynamic";
+import { DocumentPreview } from "./document-preview";
 
 // 动态加载 ForceGraph2D 组件，禁用 SSR
 const ForceGraph2D = dynamic(
@@ -118,13 +113,11 @@ export function KnowledgeGraph() {
   const [graphMode, setGraphMode] = useState<"2d" | "3d">("2d");
   const [highlightNodes, setHighlightNodes] = useState(new Set<number>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<number>());
+  const [previewDocumentId, setPreviewDocumentId] = useState<number | null>(null);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
   const graphRef = useRef<any>();
-
   const router = useRouter();
   const { toast } = useToast();
-  const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
-  const [selectedDocPreview, setSelectedDocPreview] = useState<any>(null);
-  const [showDocumentSheet, setShowDocumentSheet] = useState(false);
 
   // 颜色映射
   const nodeColors: Record<string, string> = {
@@ -203,28 +196,35 @@ export function KnowledgeGraph() {
 
   // 节点点击处理
   const handleNodeClick = useCallback((node: any) => {
-    // 如果是文档节点，直接跳转
-    if (node.is_document) {
-      router.push(`/documents/${node.document_id}`);
-      return;
-    }
-    
     setSelectedNode(node);
+    setSelectedLink(null);
     
-    // 如果有主要文档，显示文档预览
-    if (node.primary_doc_id) {
-      setSelectedDocId(node.primary_doc_id);
-      loadDocumentPreview(node.primary_doc_id);
+    // 如果节点有关联文档，显示文档预览
+    if (node.documents && node.documents.length > 0) {
+      setPreviewDocumentId(node.documents[0].id);
+      setShowDocumentPreview(true);
+      
+      // 提供视觉反馈
+      toast({
+        title: `打开文档: ${node.documents[0].title}`,
+        description: `点击查看 ${node.name} 相关的原始文档`,
+      });
     } else {
-      // 否则显示实体详情
+      // 如果没有文档，显示实体详情
       loadEntityDetails(node.id);
+      
+      toast({
+        title: `实体: ${node.name}`,
+        description: "该实体暂无关联文档",
+        variant: "default"
+      });
     }
     
     // 高亮相关节点和边
     const connectedNodeIds = new Set<number>();
     const connectedLinkIndexes = new Set<number>();
     
-    graphData.links.forEach((link: any, index: number) => {
+    graphData.links.forEach((link, index) => {
       if (link.source === node.id || link.target === node.id) {
         connectedLinkIndexes.add(index);
         if (link.source === node.id) connectedNodeIds.add(link.target);
@@ -240,7 +240,7 @@ export function KnowledgeGraph() {
       graphRef.current.centerAt(node.x, node.y, 1000);
       graphRef.current.zoom(2, 1000);
     }
-  }, [graphData, loadEntityDetails, router]);
+  }, [graphData, toast]);
 
   // 在节点的 Tooltip 中添加文档信息
   const getNodeTooltip = useCallback((node: any) => {
@@ -262,10 +262,21 @@ export function KnowledgeGraph() {
   }, []);
 
   // 边点击处理
-  const handleLinkClick = useCallback((link: GraphLink) => {
+  const handleLinkClick = useCallback((link: any) => {
     setSelectedLink(link);
     setSelectedNode(null);
     setEntityDetails(null);
+    
+    // 如果有来源文档，预览该文档
+    if (link.source_document_id) {
+      setPreviewDocumentId(link.source_document_id);
+      setShowDocumentPreview(true);
+      
+      toast({
+        title: "查看关系来源",
+        description: "正在打开包含此关系的原始文档",
+      });
+    }
     
     // 高亮相关节点
     const connectedNodes = new Set<number>();
@@ -282,7 +293,7 @@ export function KnowledgeGraph() {
       }
     });
     setHighlightLinks(connectedLinks);
-  }, [graphData]);
+  }, [graphData, toast]);
 
   // 背景点击处理
   const handleBackgroundClick = () => {
@@ -313,9 +324,10 @@ export function KnowledgeGraph() {
   });
 
   // 绘制自定义节点
-  const paintNode = useCallback((node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const size = 5 + Math.log(node.frequency || 1) * 2;
     const color = nodeColors[node.type] || "#6b7280";
+    const hasDocuments = node.documents && node.documents.length > 0;
     
     // 绘制节点圆
     ctx.beginPath();
@@ -329,6 +341,28 @@ export function KnowledgeGraph() {
     ctx.lineWidth = 1 / globalScale;
     ctx.stroke();
     
+    // 如果有文档，在右上角添加小图标
+    if (hasDocuments && globalScale > 0.7) {
+      const iconSize = 8 / globalScale;
+      const iconX = node.x! + size * 0.7;
+      const iconY = node.y! - size * 0.7;
+      
+      ctx.beginPath();
+      ctx.arc(iconX, iconY, iconSize / 2, 0, 2 * Math.PI, false);
+      ctx.fillStyle = "#3b82f6";
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1 / globalScale;
+      ctx.stroke();
+      
+      // 文档图标
+      ctx.font = `bold ${iconSize}px Arial`;
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("D", iconX, iconY);
+    }
+    
     // 绘制标签
     if (showLabels && globalScale > 0.5) {
       const fontSize = 12 / globalScale;
@@ -336,12 +370,26 @@ export function KnowledgeGraph() {
       ctx.fillStyle = "#ffffff";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      
+      // 标签背景
+      const textWidth = ctx.measureText(node.name).width;
+      const padding = 4 / globalScale;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.fillRect(
+        node.x! - textWidth / 2 - padding,
+        node.y! + size + fontSize / 2 - padding,
+        textWidth + padding * 2,
+        fontSize + padding * 2
+      );
+      
+      // 标签文本
+      ctx.fillStyle = "#ffffff";
       ctx.fillText(node.name, node.x!, node.y! + size + fontSize);
     }
   }, [selectedNode, highlightNodes, showLabels]);
 
   // 绘制自定义边
-  const paintLink = useCallback((link: GraphLink, ctx: CanvasRenderingContext2D, globalScale: number) => {
+  const paintLink = useCallback((link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const sourceNode = graphData.nodes.find(n => n.id === link.source);
     const targetNode = graphData.nodes.find(n => n.id === link.target);
     
@@ -354,7 +402,9 @@ export function KnowledgeGraph() {
     const isHighlighted = selectedLink === link || highlightLinks.has(
       graphData.links.findIndex(l => l === link)
     );
-    const color = isHighlighted ? "#fbbf24" : "#4b5563";
+    const hasSourceDoc = link.source_document_id !== undefined;
+    const color = isHighlighted ? "#fbbf24" : 
+                  hasSourceDoc ? "#8b5cf6" : "#4b5563";
     
     // 绘制线条
     ctx.beginPath();
@@ -363,6 +413,28 @@ export function KnowledgeGraph() {
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
     ctx.stroke();
+    
+    // 如果有文档来源，在边中间添加文档标记
+    if (hasSourceDoc && globalScale > 0.8) {
+      const midX = (sourceNode.x! + targetNode.x!) / 2;
+      const midY = (sourceNode.y! + targetNode.y!) / 2;
+      
+      const dotSize = 6 / globalScale;
+      ctx.beginPath();
+      ctx.arc(midX, midY, dotSize, 0, 2 * Math.PI, false);
+      ctx.fillStyle = "#3b82f6";
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1 / globalScale;
+      ctx.stroke();
+      
+      // 文档图标
+      ctx.font = `bold ${dotSize * 1.2}px Arial`;
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("D", midX, midY);
+    }
     
     // 绘制关系标签
     if (showLabels && globalScale > 0.8) {
@@ -378,7 +450,7 @@ export function KnowledgeGraph() {
       // 背景框
       const textWidth = ctx.measureText(link.relation).width;
       const padding = 2 / globalScale;
-      ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
       ctx.fillRect(
         midX - textWidth / 2 - padding,
         midY - fontSize / 2 - padding,
@@ -704,7 +776,7 @@ export function KnowledgeGraph() {
                   <ForceGraph2D
                     ref={graphRef}
                     graphData={{ nodes: filteredNodes, links: filteredLinks }}
-                    nodeLabel={getNodeTooltip}
+                    nodeLabel="name"
                     nodeAutoColorBy="type"
                     linkLabel="relation"
                     linkWidth={1}
@@ -718,6 +790,21 @@ export function KnowledgeGraph() {
                     backgroundColor="#0a0a0a"
                     cooldownTicks={100}
                     warmupTicks={50}
+                    // 鼠标悬停效果
+                    onNodeHover={(node) => {
+                      if (node) {
+                        document.body.style.cursor = 'pointer';
+                      } else {
+                        document.body.style.cursor = 'default';
+                      }
+                    }}
+                    onLinkHover={(link) => {
+                      if (link) {
+                        document.body.style.cursor = 'pointer';
+                      } else {
+                        document.body.style.cursor = 'default';
+                      }
+                    }}
                   />
                 )}
               </div>
@@ -727,16 +814,16 @@ export function KnowledgeGraph() {
                 <div>
                   <span className="inline-flex items-center gap-1">
                     <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                    点击节点查看详情
+                    蓝色节点: 有关联文档
                   </span>
                   <span className="mx-4">•</span>
                   <span className="inline-flex items-center gap-1">
                     <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                    拖拽节点进行探索
+                    紫色边: 有文档来源
                   </span>
                 </div>
                 <div>
-                  缩放: 鼠标滚轮 • 移动: 拖拽背景
+                  缩放: 鼠标滚轮 • 移动: 拖拽背景 • 点击: 查看文档
                 </div>
               </div>
             </CardContent>
@@ -744,122 +831,12 @@ export function KnowledgeGraph() {
         </div>
       </div>
 
-      {/* 添加文档预览侧边栏 */}
-      <Sheet open={showDocumentSheet} onOpenChange={setShowDocumentSheet}>
-        <SheetContent className="w-full sm:max-w-2xl bg-zinc-950 border-l border-zinc-800 overflow-y-auto">
-          <SheetHeader className="mb-6">
-            <SheetTitle className="text-xl">
-              {selectedDocPreview?.document?.title || "文档预览"}
-            </SheetTitle>
-            <p className="text-sm text-zinc-500">
-              点击"查看完整文档"以查看更多详情
-            </p>
-          </SheetHeader>
-          
-          {selectedDocPreview ? (
-            <div className="space-y-6">
-              {/* 文档基本信息 */}
-              <Card className="bg-zinc-900/50 border-zinc-800">
-                <CardContent className="p-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-zinc-400">文档大小</span>
-                      <span className="text-sm text-zinc-300">
-                        {(selectedDocPreview.stats.content_length / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-zinc-400">实体数量</span>
-                      <span className="text-sm text-emerald-300">
-                        {selectedDocPreview.stats.entity_count}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-zinc-400">关系数量</span>
-                      <span className="text-sm text-purple-300">
-                        {selectedDocPreview.stats.relation_count}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              {/* 文档内容预览 */}
-              <Card className="bg-zinc-900/50 border-zinc-800">
-                <CardContent className="p-4">
-                  <h4 className="font-medium text-zinc-100 mb-3">内容预览</h4>
-                  <ScrollArea className="h-64">
-                    <div className="prose prose-invert max-w-none">
-                      <div className="text-sm text-zinc-300 whitespace-pre-wrap">
-                        {selectedDocPreview.document.content?.slice(0, 1000) || "无内容"}
-                        {selectedDocPreview.document.content?.length > 1000 && "..."}
-                      </div>
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-              
-              {/* 实体列表 */}
-              {selectedDocPreview.entities.length > 0 && (
-                <Card className="bg-zinc-900/50 border-zinc-800">
-                  <CardContent className="p-4">
-                    <h4 className="font-medium text-zinc-100 mb-3">主要实体</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedDocPreview.entities.slice(0, 10).map((entity: any) => (
-                        <Badge
-                          key={entity.id}
-                          variant="outline"
-                          className={`cursor-pointer hover:opacity-80 ${
-                            entityColors[entity.type]?.split(" ")[0] || "text-zinc-400"
-                          } ${
-                            entityColors[entity.type]?.split(" ")[1] || "bg-zinc-800/50"
-                          }`}
-                          onClick={() => {
-                            setShowDocumentSheet(false);
-                            // 在这里可以跳转到实体的详情或者高亮实体
-                          }}
-                        >
-                          {entityIcons[entity.type]}
-                          <span className="ml-1">{entity.name}</span>
-                        </Badge>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              
-              {/* 操作按钮 */}
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => router.push(`/documents/${selectedDocId}`)}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  查看完整文档
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowDocumentSheet(false);
-                    router.push(`/graph?document=${selectedDocId}`);
-                  }}
-                  variant="outline"
-                  className="border-zinc-700 hover:bg-zinc-800"
-                >
-                  <Network className="w-4 h-4 mr-2" />
-                  查看图谱
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-center">
-                <Loader2 className="w-8 h-8 text-zinc-600 animate-spin mx-auto mb-4" />
-                <p className="text-zinc-500">加载文档预览中...</p>
-              </div>
-            </div>
-          )}
-        </SheetContent>
-      </Sheet>
+      {/* 文档预览侧边栏 */}
+      <DocumentPreview
+        documentId={previewDocumentId}
+        open={showDocumentPreview}
+        onOpenChange={setShowDocumentPreview}
+      />
     </div>
   );
 }
